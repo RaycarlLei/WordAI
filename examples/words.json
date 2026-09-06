@@ -1,0 +1,674 @@
+[
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "cat",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "cat",
+      "zh_hans": "猫",
+      "zh_hant": "貓",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "cat"
+        ],
+        "definition_en": "a small animal often kept as a pet",
+        "meanings_zh_hans": [
+          "猫"
+        ],
+        "meanings_zh_hant": [
+          "貓"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "The cat slept on the chair.",
+            "zh_hans": "猫在椅子上睡着了。",
+            "zh_hant": "貓在椅子上睡著了。",
+            "target_form": "cat",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "cat",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "river",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "river",
+      "zh_hans": "河流",
+      "zh_hant": "河流",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "river"
+        ],
+        "definition_en": "a large natural stream of water",
+        "meanings_zh_hans": [
+          "河流"
+        ],
+        "meanings_zh_hant": [
+          "河流"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "The river flows through the town.",
+            "zh_hans": "河流穿过小镇。",
+            "zh_hant": "河流穿過小鎮。",
+            "target_form": "river",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "river",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "book",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "book",
+      "zh_hans": "书籍",
+      "zh_hant": "書籍",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "book"
+        ],
+        "definition_en": "a set of pages containing written information",
+        "meanings_zh_hans": [
+          "书籍"
+        ],
+        "meanings_zh_hant": [
+          "書籍"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "She opened a book about birds.",
+            "zh_hans": "她打开了一本关于鸟的书。",
+            "zh_hant": "她打開了一本關於鳥的書。",
+            "target_form": "book",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "book",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "garden",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "garden",
+      "zh_hans": "花园",
+      "zh_hant": "花園",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "garden"
+        ],
+        "definition_en": "an area where flowers or vegetables grow",
+        "meanings_zh_hans": [
+          "花园"
+        ],
+        "meanings_zh_hant": [
+          "花園"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "We planted roses in the garden.",
+            "zh_hans": "我们在花园里种了玫瑰。",
+            "zh_hant": "我們在花園裡種了玫瑰。",
+            "target_form": "garden",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "garden",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "window",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "window",
+      "zh_hans": "窗户",
+      "zh_hant": "窗戶",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "window"
+        ],
+        "definition_en": "an opening with glass that admits light",
+        "meanings_zh_hans": [
+          "窗户"
+        ],
+        "meanings_zh_hant": [
+          "窗戶"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "Please open the window.",
+            "zh_hans": "请打开窗户。",
+            "zh_hant": "請打開窗戶。",
+            "target_form": "window",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "window",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "mountain",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "mountain",
+      "zh_hans": "山岳",
+      "zh_hant": "山岳",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "mountain"
+        ],
+        "definition_en": "a very high natural rise in the land",
+        "meanings_zh_hans": [
+          "山岳"
+        ],
+        "meanings_zh_hant": [
+          "山岳"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "Snow covered the mountain.",
+            "zh_hans": "积雪覆盖着山。",
+            "zh_hant": "積雪覆蓋著山。",
+            "target_form": "mountain",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "mountain",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "friend",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "friend",
+      "zh_hans": "朋友",
+      "zh_hant": "朋友",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "friend"
+        ],
+        "definition_en": "a person you know well and like",
+        "meanings_zh_hans": [
+          "朋友"
+        ],
+        "meanings_zh_hant": [
+          "朋友"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "My friend lives nearby.",
+            "zh_hans": "我的朋友住在附近。",
+            "zh_hant": "我的朋友住在附近。",
+            "target_form": "friend",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "friend",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "journey",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "journey",
+      "zh_hans": "旅程",
+      "zh_hant": "旅程",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "journey"
+        ],
+        "definition_en": "an act of travelling from one place to another",
+        "meanings_zh_hans": [
+          "旅程"
+        ],
+        "meanings_zh_hant": [
+          "旅程"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "Our journey began at sunrise.",
+            "zh_hans": "我们的旅程从日出时开始。",
+            "zh_hant": "我們的旅程從日出時開始。",
+            "target_form": "journey",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "journey",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "bridge",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "bridge",
+      "zh_hans": "桥梁",
+      "zh_hant": "橋樑",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "bridge"
+        ],
+        "definition_en": "a structure carrying a road over an obstacle",
+        "meanings_zh_hans": [
+          "桥梁"
+        ],
+        "meanings_zh_hant": [
+          "橋樑"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "We crossed the bridge together.",
+            "zh_hans": "我们一起过了桥。",
+            "zh_hant": "我們一起過了橋。",
+            "target_form": "bridge",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "bridge",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "forest",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "forest",
+      "zh_hans": "森林",
+      "zh_hant": "森林",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "forest"
+        ],
+        "definition_en": "a large area covered with trees",
+        "meanings_zh_hans": [
+          "森林"
+        ],
+        "meanings_zh_hant": [
+          "森林"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "Birds sang in the forest.",
+            "zh_hans": "鸟儿在森林里歌唱。",
+            "zh_hant": "鳥兒在森林裡歌唱。",
+            "target_form": "forest",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "forest",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "pencil",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "pencil",
+      "zh_hans": "铅笔",
+      "zh_hant": "鉛筆",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "pencil"
+        ],
+        "definition_en": "an instrument used for writing or drawing",
+        "meanings_zh_hans": [
+          "铅笔"
+        ],
+        "meanings_zh_hant": [
+          "鉛筆"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "He drew a circle with a pencil.",
+            "zh_hans": "他用铅笔画了一个圆。",
+            "zh_hant": "他用鉛筆畫了一個圓。",
+            "target_form": "pencil",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "pencil",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  },
+  {
+    "schema_version": "wordai_dossier_s6",
+    "status": "ok",
+    "query": "cloud",
+    "direction": "en_to_zh",
+    "suggestion": "",
+    "headword": {
+      "english": "cloud",
+      "zh_hans": "云朵",
+      "zh_hant": "雲朵",
+      "ipa_us": "",
+      "ipa_uk": ""
+    },
+    "senses": [
+      {
+        "id": "noun-1",
+        "part_of_speech": "noun",
+        "equivalents_en": [
+          "cloud"
+        ],
+        "definition_en": "a visible mass of tiny water drops in the sky",
+        "meanings_zh_hans": [
+          "云朵"
+        ],
+        "meanings_zh_hant": [
+          "雲朵"
+        ],
+        "labels": [],
+        "examples": [
+          {
+            "english": "A white cloud moved across the sky.",
+            "zh_hans": "一朵白云飘过天空。",
+            "zh_hant": "一朵白雲飄過天空。",
+            "target_form": "cloud",
+            "register": "neutral"
+          }
+        ],
+        "synonyms": [],
+        "antonyms": [],
+        "collocations": []
+      }
+    ],
+    "lexical": {
+      "lemma": "cloud",
+      "forms": [],
+      "word_family": [],
+      "phrases": [],
+      "confusables": [],
+      "etymology": {
+        "text_en": "",
+        "text_zh_hans": "",
+        "text_zh_hant": ""
+      }
+    },
+    "analysis": []
+  }
+]
