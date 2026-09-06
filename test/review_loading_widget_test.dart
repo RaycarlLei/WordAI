@@ -1,3 +1,4 @@
+import 'package:word_a_i/services/review_pronunciation.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -49,6 +50,8 @@ void main() {
     });
     addTearDown(db.close);
     await tester.pumpWidget(app(FlashCardsWidget(
+        pronunciation:
+            ReviewPronunciation(play: (_) async {}, stop: () async {}),
         repository: repo,
         testUid: 'u',
         initialWords: const [],
@@ -100,7 +103,11 @@ void main() {
       GoRoute(
           path: '/review',
           builder: (_, __) => FlashCardsWidget(
-              repository: repo, testUid: 'u', initialWords: const [])),
+              pronunciation:
+                  ReviewPronunciation(play: (_) async {}, stop: () async {}),
+              repository: repo,
+              testUid: 'u',
+              initialWords: const [])),
     ]);
     addTearDown(router.dispose);
     await tester.pumpWidget(MaterialApp.router(

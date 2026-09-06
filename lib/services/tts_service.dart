@@ -478,7 +478,7 @@ class TTSService {
         _currentPlayingUrl = audioPath;
         _activeSpeechText = fallbackText;
         _activeToken = resolvedToken;
-        await _audioPlayer.setAudioContext(const AudioContext(
+        await _audioPlayer.setAudioContext(AudioContext(
           iOS: AudioContextIOS(category: AVAudioSessionCategory.playback),
         ));
         await _audioPlayer.setVolume(1.0);

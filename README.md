@@ -14,7 +14,7 @@
 
 ## 运行
 
-安装 Flutter stable（Dart 3.6 或更新），然后：
+安装 Flutter 3.44 或更新的 stable 版本（Dart 3.6 或更新），然后：
 
 ```sh
 flutter pub get

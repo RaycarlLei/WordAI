@@ -1,3 +1,4 @@
+import 'package:word_a_i/services/review_pronunciation.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -40,6 +41,8 @@ void main() {
         ],
         supportedLocales: const [Locale('en')],
         home: FlashCardsWidget(
+          pronunciation:
+              ReviewPronunciation(play: (_) async {}, stop: () async {}),
           repository: repository,
           testUid: 'widget-user',
           initialWords: const ['word0', 'word1', 'word2', 'word3'],
@@ -162,6 +165,8 @@ void main() {
         ],
         supportedLocales: const [Locale('en')],
         home: FlashCardsWidget(
+          pronunciation:
+              ReviewPronunciation(play: (_) async {}, stop: () async {}),
           repository: repository,
           testUid: 'feedback-user',
           initialWords: const [],
@@ -256,6 +261,8 @@ void main() {
         ],
         supportedLocales: const [Locale('en')],
         home: FlashCardsWidget(
+          pronunciation:
+              ReviewPronunciation(play: (_) async {}, stop: () async {}),
           repository: repository,
           testUid: 'loading-user',
           initialWords: const [],
@@ -312,6 +319,8 @@ void main() {
         ],
         supportedLocales: const [Locale('en')],
         home: FlashCardsWidget(
+          pronunciation:
+              ReviewPronunciation(play: (_) async {}, stop: () async {}),
           repository: repository,
           testUid: 'celebration-user',
           initialWords: const [],
