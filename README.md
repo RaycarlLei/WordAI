@@ -1,27 +1,48 @@
 # WordAI Community
 
-免费的开源单词学习应用。使用 Flutter 和本地 SQLite，默认无需账号、订阅或服务器。
+[简体中文](README.zh-CN.md)
 
-这是 WordAI 的社区版，导入了当前产品的学习与 Flash Card 核心，并采用独立、干净的 Git 历史。它不是生产版的完整镜像：账号、云同步、AI 查词、支付、生产词库下载与部署配置不包含在内。
+An offline vocabulary-learning app built with Flutter and SQLite. Learn and review
+words without an account, subscription or hosted service.
 
-## 已包含
+This community edition contains the learning and flash-card core from WordAI,
+adapted to run independently with a clean Git history. The production app's
+accounts, cloud sync, AI lookup, billing and private content are not included.
 
-- 本地学习记录、词义级进度、例句与独立识别两个阶段。
-- 从本地已导入的全部词义中选择干扰选项，避免“题目不足”误报为“全部学完”。
-- 每题自动发音，优先本地音频缓存；可选自建 HTTPS 语音网关；失败时尝试设备语音。
-- 12 个原创示例词；导入自己有权使用的 S6 格式 JSON 词条。
-- 英文、简体中文和繁体中文复习界面；减少动态效果支持。
+## Run locally
 
-## 运行
-
-安装 Flutter 3.44 或更新的 stable 版本（Dart 3.6 或更新），然后：
+Use Flutter 3.44 or a newer stable release with a compatible Dart SDK (3.6+).
 
 ```sh
 flutter pub get
 flutter run
 ```
 
-原生工程包含 Android、iOS、macOS。iOS/macOS 真机签名由开发者自行配置；仓库没有个人签名团队、证书或生产服务配置。平台支持以实际构建和测试结果为准。
+Android, iOS and macOS projects are included. Device signing for iOS/macOS is your
+own configuration; no signing team, certificate or production backend is bundled.
+The [CI workflow](.github/workflows/checks.yml) runs analysis, tests and an Android
+debug build. Platform support beyond those checks should be verified on the target device.
+
+## What the app does
+
+- Stores learning records and per-meaning progress in local SQLite.
+- Reviews example sentences and independent word recognition as separate stages.
+- Selects distractors from all imported meanings, so a small current review queue
+  does not incorrectly appear to be fully learned.
+- Plays pronunciation with local caching, optional self-hosted speech, and device
+  speech fallback when available.
+- Includes 12 original example words and imports user-supplied S6 JSON entries.
+- Provides English, Simplified Chinese and Traditional Chinese review interfaces,
+  with support for reduced motion.
+
+## Read the engineering
+
+| Problem | Implementation | Regression tests |
+|---|---|---|
+| Persist meaning-level learning progress | [learning_repository.dart](lib/services/learning_repository.dart) | [learning_repository_test.dart](test/learning_repository_test.dart) |
+| Prepare a usable review from available content | [review_preparation.dart](lib/services/review_preparation.dart) | [review_preparation_test.dart](test/review_preparation_test.dart) |
+| Coordinate pronunciation during review | [review_pronunciation.dart](lib/services/review_pronunciation.dart) | [review_pronunciation_test.dart](test/review_pronunciation_test.dart), [playback arbitration](test/tts_playback_arbiter_test.dart) |
+| Keep review states explicit | [review availability tests](test/review_availability_widget_test.dart) | [loading-state tests](test/review_loading_widget_test.dart) |
 
 ```sh
 flutter analyze
@@ -29,24 +50,38 @@ flutter test
 python3 scripts/check_public_tree.py
 ```
 
-## 导入词条
+## Import words
 
-首页选择“导入 JSON”。文件可以是一个词条对象或数组，采用 `lib/services/wordai_dossier.dart` 定义的 S6 schema。整个文件先验证，再写入本地数据库；输入上限 10 MB / 20,000 条。重复导入更新内容并保留学习进度。导入过程中发生存储错误时，已完成的词条会保留，可以重试。
+Choose **Import JSON** on the home screen. A file may contain one entry or an array
+using the S6 schema in [wordai_dossier.dart](lib/services/wordai_dossier.dart).
+See [examples/words.json](examples/words.json).
 
-示例：`examples/words.json`。请确认导入内容的分发与使用许可。生产环境的第三方词库和音频没有随本仓库分发。
+Files are validated before writes, with a limit of 10 MB and 20,000 entries.
+Reimporting an entry updates its content while preserving learning progress. A
+storage failure may leave earlier entries imported; retrying is supported. The
+import is not represented as an all-or-nothing database transaction.
 
-## 可选语音网关
+Import only content you have permission to use. Production third-party dictionaries
+and audio collections are not distributed here.
 
-默认不联系网络服务。设备离线语音是否可用取决于系统安装的语音包。需要下载发音时，自行实现 [网关协议](docs/speech-gateway.md)，再显式配置自己的地址：
+## Optional speech gateway
+
+The default configuration makes no network requests to a hosted speech service.
+Device speech availability depends on the installed system voices. To fetch audio,
+implement the [gateway protocol](docs/speech-gateway.md) and explicitly configure it:
 
 ```sh
 flutter run --dart-define=WORD_AI_API_BASE_URL=https://your-gateway.example
 ```
 
-该地址会编译进客户端，只能放非敏感的服务地址。供应商密钥只能保存在服务端。使用自建网关时，当前需要发音的文字会发送给该网关；失败不会阻止本地学习。
+The URL is compiled into the client and must contain no secret. Provider keys
+belong on the server. Requested speech text is sent to your configured gateway;
+a gateway failure does not stop local learning.
 
-## 开源与贡献
+## Scope and contributions
 
-源代码采用 Apache-2.0，可修改、自托管、再分发及商用，遵守许可证和第三方许可即可。WordAI 名称与图标不构成商标授权。依赖包继续适用各自许可证。
+Source code is Apache-2.0 licensed, including commercial use subject to the license
+and third-party terms. WordAI names and artwork do not grant trademark rights.
+Community-edition history and usage must not be confused with the private product.
 
-参见 [开源范围](docs/open-source-scope.zh-CN.md)、[贡献说明](CONTRIBUTING.md) 和 [安全说明](SECURITY.md)。
+[Open-source boundary](docs/open-source-scope.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
