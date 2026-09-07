@@ -354,6 +354,21 @@ void main() {
       final target = (await tester.runAsync(
         () => repository.targetById(session.targetIds[session.currentIndex]),
       ))!;
+      // SQLite commits the next position before the widget finishes loading
+      // that question. The shared heading (and absence of feedback) can still
+      // describe the previous card, so synchronize on this target's sentence.
+      final sentence = find.text(target.exampleEnglish, findRichText: true);
+      for (var attempt = 0;
+          attempt < 100 && sentence.evaluate().isEmpty;
+          attempt++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(sentence, findsOneWidget,
+          reason: 'Card $index must render before its answer is tapped');
+      expect(find.text(target.definitionEnglish), findsOneWidget);
       await tester.tap(find.text(target.definitionEnglish));
       for (var attempt = 0;
           attempt < 30 &&
