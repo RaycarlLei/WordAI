@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'tts_service.dart';
 
 /// Owns only this review's pronunciation; downloads may finish caching after
@@ -8,6 +10,7 @@ class ReviewPronunciation {
   ReviewPronunciation({
     required Future<void> Function(String word) play,
     required Future<void> Function() stop,
+    this.playbackState,
   })  : _play = play,
         _stop = stop;
 
@@ -18,12 +21,14 @@ class ReviewPronunciation {
         await TTSService.instance.generateAndPlay(text: word, sourceId: source);
       },
       stop: () => TTSService.instance.stopSource(source),
+      playbackState: TTSService.instance.playbackState,
     );
   }
 
   static int _sequence = 0;
   final Future<void> Function(String) _play;
   final Future<void> Function() _stop;
+  final ValueListenable<TtsPlaybackSnapshot>? playbackState;
   String? _lastQuestion;
   bool _started = false;
   bool _disposed = false;

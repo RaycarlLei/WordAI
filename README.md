@@ -46,6 +46,7 @@ not a signed store release. Platform support beyond those checks should be verif
 | Bound a slow speech download | [community_gateway.dart](lib/services/community_gateway.dart) | [gateway lifecycle](test/community_gateway_test.dart) |
 | Prepare a usable review from available content | [review_preparation.dart](lib/services/review_preparation.dart) | [review_preparation_test.dart](test/review_preparation_test.dart) |
 | Coordinate pronunciation during review | [review_pronunciation.dart](lib/services/review_pronunciation.dart) | [review_pronunciation_test.dart](test/review_pronunciation_test.dart), [playback arbitration](test/tts_playback_arbiter_test.dart) |
+| Isolate old audio events and bound native waits | [audio ownership contract](docs/audio-lifecycle.md), [tts_service.dart](lib/services/tts_service.dart) | [native lifecycle](test/tts_service_lifecycle_test.dart) |
 | Keep review states explicit | [review availability tests](test/review_availability_widget_test.dart) | [loading-state tests](test/review_loading_widget_test.dart) |
 
 ```sh

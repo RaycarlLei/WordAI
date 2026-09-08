@@ -1,4 +1,5 @@
 import 'package:word_a_i/services/review_pronunciation.dart';
+import 'package:word_a_i/services/tts_service.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -13,7 +14,8 @@ import 'package:word_a_i/services/wordai_dossier.dart';
 void main() {
   sqfliteFfiInit();
 
-  testWidgets('correct answer stays minimal, then advances in 1s',
+  testWidgets(
+      'audio unavailable is visible without blocking answer and advance',
       (tester) async {
     late Database db;
     late LearningRepository repository;
@@ -29,6 +31,9 @@ void main() {
       }
     });
     addTearDown(db.close);
+    final audioState =
+        ValueNotifier<TtsPlaybackSnapshot>(const TtsPlaybackSnapshot.idle());
+    addTearDown(audioState.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -41,8 +46,11 @@ void main() {
         ],
         supportedLocales: const [Locale('en')],
         home: FlashCardsWidget(
-          pronunciation:
-              ReviewPronunciation(play: (_) async {}, stop: () async {}),
+          pronunciation: ReviewPronunciation(
+            play: (_) async {},
+            stop: () async {},
+            playbackState: audioState,
+          ),
           repository: repository,
           testUid: 'widget-user',
           initialWords: const ['word0', 'word1', 'word2', 'word3'],
@@ -60,6 +68,11 @@ void main() {
 
     expect(find.text('Read it in context'), findsOneWidget);
     expect(find.text('Not sure'), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio-unavailable')), findsNothing);
+    audioState.value = const TtsPlaybackSnapshot.unavailable();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('audio-unavailable')), findsOneWidget);
+    expect(find.textContaining('You can keep reviewing.'), findsOneWidget);
     final session = (await tester.runAsync(
       () => repository.resumeActiveSession('widget-user'),
     ))!;

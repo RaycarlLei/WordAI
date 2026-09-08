@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.2
+
+- Give each media playback its own player and keep native ownership separate
+  from UI completion. Old events and page exits cannot cancel a newer request.
+- Bound each native call to eight seconds. An ambiguous timeout disables audio
+  for the application session, immediately attempts to stop the captured source,
+  and observes late results for cleanup. Learning and answer submission remain
+  available with a text status explaining that audio is unavailable.
+- Disable unused native position polling and test the actual service against
+  controlled player and system-speech platform calls, including delayed failures.
+- Document system-speech callback limitations and best-effort native cleanup.
+  These tests do not establish physical-device silence or a total exit deadline.
+
 ## 0.1.1
 
 - Keep imported content and learning progress when the home screen refreshes.
