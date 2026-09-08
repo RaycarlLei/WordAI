@@ -34,6 +34,7 @@ not a signed store release. Platform support beyond those checks should be verif
 - Plays pronunciation with local caching, optional self-hosted speech, and device
   speech fallback when available.
 - Includes 12 original example words and imports user-supplied S6 JSON entries.
+- Exports local learning backups and restores a validated snapshot in one transaction.
 - Provides English, Simplified Chinese and Traditional Chinese review interfaces,
   with support for reduced motion.
 
@@ -44,6 +45,8 @@ not a signed store release. Platform support beyond those checks should be verif
 | Persist meaning-level learning progress | [learning_repository.dart](lib/services/learning_repository.dart) | [learning_repository_test.dart](test/learning_repository_test.dart) |
 | Keep unanswered questions bound to imported content | [persisted review contract](docs/persisted-review.md) | [disk, migration and failure tests](test/persisted_review_content_test.dart) |
 | Preserve imported content across refreshes | [dictionary_import.dart](lib/services/dictionary_import.dart) | [home import](test/home_import_widget_test.dart), [dictionary validation](test/dictionary_import_test.dart) |
+| Recover vocabulary and progress without copying a live database | [learning backup contract](docs/learning-backup.md) | [disk and rollback tests](test/learning_backup_test.dart), [confirmation flow](test/learning_backup_widget_test.dart) |
+| Confirm a backup is saved through the system file picker | [backup_files.dart](lib/services/backup_files.dart) | [file adapter](test/backup_files_test.dart), [Android acceptance](.github/workflows/android-backup.yml) |
 | Bound a slow speech download | [community_gateway.dart](lib/services/community_gateway.dart) | [gateway lifecycle](test/community_gateway_test.dart) |
 | Prepare a usable review from available content | [review_preparation.dart](lib/services/review_preparation.dart) | [review_preparation_test.dart](test/review_preparation_test.dart) |
 | Coordinate pronunciation during review | [review_pronunciation.dart](lib/services/review_pronunciation.dart) | [review_pronunciation_test.dart](test/review_pronunciation_test.dart), [playback arbitration](test/tts_playback_arbiter_test.dart) |
@@ -58,7 +61,7 @@ python3 scripts/check_public_tree.py
 
 ## Import words
 
-Choose **Import JSON** on the home screen. A file may contain one entry or an array
+Choose **Import dictionary** on the home screen. A file may contain one entry or an array
 using the S6 schema in [wordai_dossier.dart](lib/services/wordai_dossier.dart).
 See [examples/words.json](examples/words.json).
 
@@ -74,11 +77,33 @@ page prepares a fresh question. Temporary database failures leave the round
 retryable. See the [persisted review contract](docs/persisted-review.md), including
 the schema 3 to 4 upgrade and preservation of previously earned progress.
 
-Refreshing the home screen seeds only missing sample meanings. It does not
-overwrite an imported replacement or reset its learning state.
+The home screen seeds example words only when the local vocabulary is empty.
+Refreshing or reopening a restored vocabulary does not add missing examples or
+overwrite imported content and progress.
 
 Import only content you have permission to use. Production third-party dictionaries
 and audio collections are not distributed here.
+
+## Back up learning data
+
+Choose **Learning backup → Save backup** to save vocabulary, meaning-level
+progress and review history. **Restore from file** validates a complete backup
+(up to 32 MiB) and previews its date and record counts. Confirming **Replace local
+learning data** replaces the current learning data; save a separate backup first
+if you need to keep it. Unfinished rounds close, and the next round prepares new
+questions from the restored content.
+
+The JSON file is readable and should be kept in a private location. This is a
+learning snapshot, not an archive of the original S6 files, settings, or audio.
+Android uses the system document picker; iOS uses system document export.
+Desktop saving uses the platform file dialog. A failed save may leave a partial
+file. An iOS export confirmation does not prove a cloud provider has synchronized it.
+See the [format, limits and failure contract](docs/learning-backup.md).
+
+This feature does not grant a newly signed APK access to an older installation's
+data. Development APKs from separate builds may use different debug keys; keep
+the old installation and its data until a usable backup exists. The community
+releases are still development builds, without a stable distribution signing key.
 
 ## Optional speech gateway
 

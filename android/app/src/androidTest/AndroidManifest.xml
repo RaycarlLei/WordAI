@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- These providers are installed only in the instrumentation APK. -->
+    <application android:label="WordAI synthetic backup tests">
+        <provider
+            android:name="org.wordai.community.word_a_i.BackupTestDocumentsProvider"
+            android:authorities="org.wordai.community.word_a_i.test.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <provider
+            android:name="org.wordai.community.word_a_i.BackupTestControlProvider"
+            android:authorities="org.wordai.community.word_a_i.test.control"
+            android:exported="true" />
+    </application>
+</manifest>
