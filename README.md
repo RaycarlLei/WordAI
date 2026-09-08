@@ -42,6 +42,7 @@ not a signed store release. Platform support beyond those checks should be verif
 | Problem | Implementation | Regression tests |
 |---|---|---|
 | Persist meaning-level learning progress | [learning_repository.dart](lib/services/learning_repository.dart) | [learning_repository_test.dart](test/learning_repository_test.dart) |
+| Keep unanswered questions bound to imported content | [persisted review contract](docs/persisted-review.md) | [disk, migration and failure tests](test/persisted_review_content_test.dart) |
 | Preserve imported content across refreshes | [dictionary_import.dart](lib/services/dictionary_import.dart) | [home import](test/home_import_widget_test.dart), [dictionary validation](test/dictionary_import_test.dart) |
 | Bound a slow speech download | [community_gateway.dart](lib/services/community_gateway.dart) | [gateway lifecycle](test/community_gateway_test.dart) |
 | Prepare a usable review from available content | [review_preparation.dart](lib/services/review_preparation.dart) | [review_preparation_test.dart](test/review_preparation_test.dart) |
@@ -66,6 +67,12 @@ entries. Empty files, empty arrays and lookup abstentions are not importable.
 Reimporting an entry updates its content while preserving learning progress. A
 storage failure may leave earlier entries imported; retrying is supported. The
 import is not represented as an all-or-nothing database transaction.
+
+An unanswered review is checked against its saved choices and current content
+before it can advance learning progress. If an import changes that content, the
+page prepares a fresh question. Temporary database failures leave the round
+retryable. See the [persisted review contract](docs/persisted-review.md), including
+the schema 3 to 4 upgrade and preservation of previously earned progress.
 
 Refreshing the home screen seeds only missing sample meanings. It does not
 overwrite an imported replacement or reset its learning state.
