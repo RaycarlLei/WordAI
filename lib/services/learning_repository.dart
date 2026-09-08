@@ -248,6 +248,7 @@ class LearningRepository {
         version: _databaseVersion,
         onCreate: createSchema,
         onUpgrade: upgradeSchema,
+        onDowngrade: rejectSchemaDowngrade,
         onOpen: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       );
       return _database!;
@@ -340,12 +341,38 @@ class LearningRepository {
     if (oldVersion < 2) await _createSyncStateTable(db);
     if (oldVersion < 3) {
       await _createReviewQuestionsTable(db);
-    } else if (oldVersion < 4) {
-      // NULL identifies a legacy snapshot. Its original content cannot be
-      // inferred from the current dictionary; rebuild it when next requested.
-      await db.execute(
-          'ALTER TABLE review_questions ADD COLUMN content_fingerprint TEXT');
     }
+    if (oldVersion < 4) {
+      final columns = await db.rawQuery('PRAGMA table_info(review_questions)');
+      final existing = columns.where((column) =>
+          (column['name'] as String).toLowerCase() == 'content_fingerprint');
+      if (existing.isNotEmpty) {
+        // v0.1.2 opens with version 3 and no onDowngrade handler. sqflite can
+        // lower user_version without removing this column. Accept that known
+        // shape on re-upgrade, preserving both bound and legacy NULL snapshots.
+        final column = existing.single;
+        if ((column['type'] as String).trim().toUpperCase() != 'TEXT' ||
+            column['notnull'] != 0 ||
+            column['pk'] != 0 ||
+            column['dflt_value'] != null) {
+          throw StateError('Incompatible review question fingerprint column.');
+        }
+      } else {
+        // NULL identifies a legacy snapshot. Its original content cannot be
+        // inferred from the current dictionary; rebuild it when next requested.
+        await db.execute(
+            'ALTER TABLE review_questions ADD COLUMN content_fingerprint TEXT');
+      }
+    }
+  }
+
+  @visibleForTesting
+  static Future<void> rejectSchemaDowngrade(
+      Database db, int oldVersion, int newVersion) async {
+    // Do not silently relabel, delete, or reinterpret a future database.
+    throw StateError(
+        'Learning database version $oldVersion requires a newer app '
+        '(this app supports version $newVersion).');
   }
 
   static Future<void> _createReviewQuestionsTable(DatabaseExecutor db) =>
