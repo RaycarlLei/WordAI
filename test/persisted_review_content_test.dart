@@ -308,6 +308,118 @@ void main() {
     await _answer(disk.repo, session, fresh);
   });
 
+  test('re-upgrade preserves a v4 column after an actual legacy v3 open',
+      () async {
+    final disk = await _Disk.create();
+    final first = (await disk.repo.createSession('local', queries: ['cat']))!;
+    await _answer(
+        disk.repo, first, (await disk.repo.buildQuestion(first, 'en'))!);
+    await disk.repo.finishSession(
+        uid: 'local', sessionId: first.id, completed: true, activeMs: 10);
+    final session = (await disk.repo.createSession('local', queries: ['cat']))!;
+    final english = (await disk.repo.buildQuestion(session, 'en'))!;
+    final originalQuestions = await disk.db.query('review_questions');
+    final originalProgress = await disk.db.query('learning_progress');
+    final originalAttempts = await disk.db.query('review_attempts');
+
+    await disk.db.close();
+    // This is the legacy open behavior, not a manual setVersion(3): the old
+    // app supplied version 3 with no onDowngrade callback to sqflite.
+    disk.db = await databaseFactoryFfi.openDatabase(disk.path,
+        options: OpenDatabaseOptions(version: 3, singleInstance: false));
+    expect(await disk.db.getVersion(), 3);
+    expect(await disk.db.query('review_questions'), originalQuestions);
+    final legacy = ReviewQuestion(
+        target: english.target,
+        options: const ['猫', '河流', '书籍', '花园'],
+        correctIndex: 0,
+        languageCode: 'zh_Hans');
+    // A question created by that old app omits the unknown nullable column.
+    await disk.db.insert('review_questions', {
+      'session_id': session.id,
+      'target_id': legacy.target.targetId,
+      'language_code': legacy.languageCode,
+      'options_json': jsonEncode(legacy.options),
+      'correct_index': legacy.correctIndex,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    await disk.reopen();
+    expect(await disk.db.getVersion(), 4);
+    expect(await disk.db.query('learning_progress'), originalProgress);
+    expect(await disk.db.query('review_attempts'), originalAttempts);
+    for (final original in originalQuestions) {
+      expect(
+          (await disk.db.query('review_questions',
+                  where: 'session_id = ? AND language_code = ?',
+                  whereArgs: [
+                original['session_id'],
+                original['language_code']
+              ]))
+              .single,
+          original);
+    }
+    final unbound = (await disk.db.query('review_questions',
+            where: 'session_id = ? AND language_code = ?',
+            whereArgs: [session.id, 'zh_Hans']))
+        .single;
+    expect(unbound['content_fingerprint'], isNull);
+    await expectLater(_answer(disk.repo, session, legacy),
+        throwsA(isA<ReviewQuestionChanged>()));
+    expect((await disk.repo.buildQuestion(session, 'en'))!.options,
+        english.options);
+    final refreshed = (await disk.repo.buildQuestion(session, 'zh_Hans'))!;
+    expect(refreshed.type, ReviewTestType.independent);
+    await _answer(disk.repo, session, refreshed);
+    await disk.reopen();
+    expect((await disk.repo.targetById(legacy.target.targetId))!.stage,
+        LearningStage.learned);
+    expect(await disk.db.query('review_attempts'), hasLength(2));
+  });
+
+  test(
+      're-upgrade rejects conflicting fingerprint column shapes without writes',
+      () async {
+    for (final declaration in [
+      'BLOB',
+      "TEXT NOT NULL DEFAULT ''",
+      "TEXT DEFAULT 'unbound'",
+    ]) {
+      final disk = await _Disk.create();
+      final progress = await disk.db.query('learning_progress');
+      await disk.db.execute(
+          'ALTER TABLE review_questions DROP COLUMN content_fingerprint');
+      await disk.db.execute('ALTER TABLE review_questions '
+          'ADD COLUMN content_fingerprint $declaration');
+      await disk.db.setVersion(3);
+      final columns =
+          await disk.db.rawQuery('PRAGMA table_info(review_questions)');
+      await expectLater(disk.reopen(), throwsStateError, reason: declaration);
+      disk.db = await databaseFactoryFfi.openDatabase(disk.path,
+          options: OpenDatabaseOptions(singleInstance: false));
+      expect(await disk.db.getVersion(), 3, reason: declaration);
+      expect(await disk.db.query('learning_progress'), progress);
+      expect(await disk.db.rawQuery('PRAGMA table_info(review_questions)'),
+          columns);
+    }
+  });
+
+  test(
+      'a newer database is rejected without lowering its version or losing data',
+      () async {
+    final disk = await _Disk.create();
+    final progress = await disk.db.query('learning_progress');
+    await disk.db.setVersion(5);
+    await expectLater(
+        disk.reopen(),
+        throwsA(isA<StateError>().having((error) => error.message, 'message',
+            contains('requires a newer app'))));
+    disk.db = await databaseFactoryFfi.openDatabase(disk.path,
+        options: OpenDatabaseOptions(singleInstance: false));
+    expect(await disk.db.getVersion(), 5);
+    expect(await disk.db.query('learning_progress'), progress);
+  });
+
   test('an aborted attempt insert rolls back progress and retries after reopen',
       () async {
     final disk = await _Disk.create();
@@ -390,6 +502,7 @@ class _Disk {
               singleInstance: false,
               onCreate: LearningRepository.createSchema,
               onUpgrade: LearningRepository.upgradeSchema,
+              onDowngrade: LearningRepository.rejectSchemaDowngrade,
               onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON')));
 
   Future<void> reopen() async {

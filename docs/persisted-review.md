@@ -58,8 +58,24 @@ when requested; the migration does not backfill an invented fingerprint onto
 its old choices. Malformed or stale snapshots are likewise rebuilt. Only the
 question snapshot is discarded, and database read/delete failures remain errors.
 
+Version 0.1.2 does not supply a downgrade callback. With the pinned sqflite
+dependency, opening a schema 4 database with that old app lowers `user_version`
+to 3 while leaving the fingerprint column in place. Upgrading again recognizes
+that existing column if it is nullable `TEXT`, is not a primary key, and has no
+default. It preserves its values and all earned progress; NULL snapshots newly
+created by the old app are rebuilt normally. A conflicting column shape fails
+the migration instead of silently replacing it or marking it upgraded.
+
+Starting with 0.1.3, opening a database whose version is newer than the app
+supports is explicitly rejected without lowering its version or deleting data.
+This cannot change how already released older apps behave. The tested 4 to 3 to
+4 recovery is not general downgrade support, and does not make an older app's
+answer validation safe. Keep backups before changing app versions and use a
+compatible app to open a newer database.
+
 `test/persisted_review_content_test.dart` uses fresh file-backed SQLite databases,
-closes and reopens them, exercises the schema upgrade, injects one-shot read and
+closes and reopens them, exercises schema upgrades and the legacy downgrade open,
+rejects incompatible column shapes and future versions, injects one-shot read and
 retirement failures, interrupts an attempt write with a SQLite abort trigger, and
 holds candidate loading across an import. Widget regressions cover updating a
 visible question and retrying after a preparation failure.
