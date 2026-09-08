@@ -433,10 +433,42 @@ class LearningRepository {
   Future<int> registerMissingDossier(String uid, WordAiDossier dossier) =>
       _registerDossier(uid, dossier, updateExisting: false);
 
+  /// Seeds an entirely empty profile in one transaction. Any existing progress,
+  /// including incomplete review content, belongs to the user and blocks seeding.
+  Future<int> seedEmptyProfile(String uid, List<WordAiDossier> dossiers) async {
+    if (uid.isEmpty || dossiers.isEmpty) return 0;
+    final seeds = List<WordAiDossier>.of(dossiers, growable: false);
+    if (seeds.any((dossier) => !dossier.isOk || dossier.senses.isEmpty)) {
+      throw ArgumentError('Seed dossiers must contain learning content.');
+    }
+    final db = await database;
+    return db.transaction((txn) async {
+      final existing = await txn.query('learning_progress',
+          columns: const ['target_id'],
+          where: 'uid = ?',
+          whereArgs: [uid],
+          limit: 1);
+      if (existing.isNotEmpty) return 0;
+      var inserted = 0;
+      for (final dossier in seeds) {
+        inserted +=
+            await _writeDossier(txn, uid, dossier, updateExisting: false);
+      }
+      return inserted;
+    });
+  }
+
   Future<int> _registerDossier(String uid, WordAiDossier dossier,
       {required bool updateExisting}) async {
     if (uid.isEmpty || !dossier.isOk || dossier.senses.isEmpty) return 0;
     final db = await database;
+    return db.transaction((txn) =>
+        _writeDossier(txn, uid, dossier, updateExisting: updateExisting));
+  }
+
+  Future<int> _writeDossier(
+      DatabaseExecutor txn, String uid, WordAiDossier dossier,
+      {required bool updateExisting}) async {
     final direction = dossier.direction.wireValue;
     final normalizedQuery = dossier.query.trim();
     final lexemeId = _hash('$direction::${normalizedQuery.toLowerCase()}');
@@ -444,81 +476,76 @@ class LearningRepository {
     final word = incomingWord.isNotEmpty ? incomingWord : normalizedQuery;
     final now = DateTime.now().millisecondsSinceEpoch;
     var changed = 0;
-    final changedTargetIds = <String>[];
-    await db.transaction((txn) async {
-      for (final sense in dossier.senses) {
-        final example = sense.examples.isEmpty ? null : sense.examples.first;
-        final targetId = _targetId(uid, lexemeId, sense.id);
-        final content = <String, String>{
-          'word': incomingWord,
-          'query': normalizedQuery,
-          'direction': direction,
-          'sense_id': sense.id,
-          'part_of_speech': sense.partOfSpeech,
-          'definition_en': sense.definitionEnglish,
-          'meaning_zh_hans': sense.meaningsSimplified.join('；'),
-          'meaning_zh_hant': sense.meaningsTraditional.join('；'),
-          'example_en': example?.english ?? '',
-          'example_zh_hans': example?.simplified ?? '',
-          'example_zh_hant': example?.traditional ?? '',
-          'target_form': example?.targetForm ?? '',
-        };
-        final existingRows = await txn.query(
-          'learning_progress',
-          where: 'target_id = ? AND uid = ?',
-          whereArgs: [targetId, uid],
-          limit: 1,
-        );
-        if (existingRows.isEmpty) {
-          await txn.insert('learning_progress', <String, Object?>{
-            'target_id': targetId,
-            'uid': uid,
-            'lexeme_id': lexemeId,
-            ...content,
-            'word': word,
-            'target_form': content['target_form']!.trim().isEmpty
-                ? word
-                : content['target_form'],
-            'stage': 0,
-            'learned_once': 0,
-            'attempt_count': 0,
-            'content_version': kWordAiDossierContentRevision,
-            'updated_at': now,
-          });
-          changed++;
-          changedTargetIds.add(targetId);
-          continue;
-        }
-
-        if (!updateExisting) continue;
-
-        // A regenerated dossier repairs stale text in place. Learning state
-        // and timestamps are intentionally absent from this update. Empty
-        // partial fields also cannot erase already usable local content.
-        final existing = existingRows.first;
-        final updates = <String, Object?>{};
-        for (final entry in content.entries) {
-          final incoming = entry.value.trim();
-          if (incoming.isEmpty) continue;
-          final current = (existing[entry.key] as String? ?? '').trim();
-          if (incoming != current) updates[entry.key] = incoming;
-        }
-        if (existing['content_version'] != kWordAiDossierContentRevision) {
-          updates['content_version'] = kWordAiDossierContentRevision;
-        }
-        if (updates.isEmpty) continue;
-        updates['updated_at'] = now;
-        updates['synced_at'] = null;
-        await txn.update(
-          'learning_progress',
-          updates,
-          where: 'target_id = ? AND uid = ?',
-          whereArgs: [targetId, uid],
-        );
+    for (final sense in dossier.senses) {
+      final example = sense.examples.isEmpty ? null : sense.examples.first;
+      final targetId = _targetId(uid, lexemeId, sense.id);
+      final content = <String, String>{
+        'word': incomingWord,
+        'query': normalizedQuery,
+        'direction': direction,
+        'sense_id': sense.id,
+        'part_of_speech': sense.partOfSpeech,
+        'definition_en': sense.definitionEnglish,
+        'meaning_zh_hans': sense.meaningsSimplified.join('；'),
+        'meaning_zh_hant': sense.meaningsTraditional.join('；'),
+        'example_en': example?.english ?? '',
+        'example_zh_hans': example?.simplified ?? '',
+        'example_zh_hant': example?.traditional ?? '',
+        'target_form': example?.targetForm ?? '',
+      };
+      final existingRows = await txn.query(
+        'learning_progress',
+        where: 'target_id = ? AND uid = ?',
+        whereArgs: [targetId, uid],
+        limit: 1,
+      );
+      if (existingRows.isEmpty) {
+        await txn.insert('learning_progress', <String, Object?>{
+          'target_id': targetId,
+          'uid': uid,
+          'lexeme_id': lexemeId,
+          ...content,
+          'word': word,
+          'target_form': content['target_form']!.trim().isEmpty
+              ? word
+              : content['target_form'],
+          'stage': 0,
+          'learned_once': 0,
+          'attempt_count': 0,
+          'content_version': kWordAiDossierContentRevision,
+          'updated_at': now,
+        });
         changed++;
-        changedTargetIds.add(targetId);
+        continue;
       }
-    });
+
+      if (!updateExisting) continue;
+
+      // A regenerated dossier repairs stale text in place. Learning state
+      // and timestamps are intentionally absent from this update. Empty
+      // partial fields also cannot erase already usable local content.
+      final existing = existingRows.first;
+      final updates = <String, Object?>{};
+      for (final entry in content.entries) {
+        final incoming = entry.value.trim();
+        if (incoming.isEmpty) continue;
+        final current = (existing[entry.key] as String? ?? '').trim();
+        if (incoming != current) updates[entry.key] = incoming;
+      }
+      if (existing['content_version'] != kWordAiDossierContentRevision) {
+        updates['content_version'] = kWordAiDossierContentRevision;
+      }
+      if (updates.isEmpty) continue;
+      updates['updated_at'] = now;
+      updates['synced_at'] = null;
+      await txn.update(
+        'learning_progress',
+        updates,
+        where: 'target_id = ? AND uid = ?',
+        whereArgs: [targetId, uid],
+      );
+      changed++;
+    }
     return changed;
   }
 

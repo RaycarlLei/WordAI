@@ -9,6 +9,11 @@ import 'flutter_flow/internationalization.dart';
 import 'pages/flash_cards/flash_cards_widget.dart';
 import 'services/learning_repository.dart';
 import 'services/dictionary_import.dart';
+import 'services/backup_files.dart';
+import 'services/learning_backup.dart';
+import 'widgets/learning_backup_dialog.dart';
+import 'widgets/reicon.dart';
+import 'widgets/wordai_motion.dart';
 import 'sample_words.dart';
 
 Future<void> main() async {
@@ -26,9 +31,11 @@ class CommunityApp extends StatefulWidget {
     super.key,
     @visibleForTesting this.homeRepository,
     @visibleForTesting this.selectDictionary,
+    @visibleForTesting this.backupFiles,
   });
   final LearningRepository? homeRepository;
   final Future<XFile?> Function()? selectDictionary;
+  final BackupFiles? backupFiles;
   @override
   State<CommunityApp> createState() => _CommunityAppState();
 }
@@ -41,6 +48,7 @@ class _CommunityAppState extends State<CommunityApp> {
         builder: (_, __) => _Home(
             repository: widget.homeRepository ?? LearningRepository.instance,
             selectDictionary: widget.selectDictionary,
+            backupFiles: widget.backupFiles,
             onLocale: (locale) => setState(() => _locale = locale))),
     GoRoute(
         path: '/review',
@@ -85,18 +93,23 @@ class _Home extends StatefulWidget {
   const _Home(
       {required this.onLocale,
       required this.repository,
+      this.backupFiles,
       this.selectDictionary});
   final ValueChanged<Locale> onLocale;
   final LearningRepository repository;
   final Future<XFile?> Function()? selectDictionary;
+  final BackupFiles? backupFiles;
   @override
   State<_Home> createState() => _HomeState();
 }
 
 class _HomeState extends State<_Home> {
   LearningRepository get _repo => widget.repository;
+  late final BackupFiles _backupFiles =
+      widget.backupFiles ?? PlatformBackupFiles();
   List<String> _words = [];
   bool _busy = true;
+  bool _backupOpen = false;
   String? _importMessage;
   String? _loadError;
   int _pending = 0;
@@ -111,9 +124,9 @@ class _HomeState extends State<_Home> {
   Future<void> _load() async {
     if (mounted) setState(() => _busy = true);
     try {
-      for (final d in sampleWords()) {
-        await _repo.registerMissingDossier('local', d);
-      }
+      // A restored vocabulary is authoritative. Seed only an empty profile,
+      // so retries and later launches do not add words to a restored backup.
+      await _repo.seedEmptyProfile('local', sampleWords());
       final words = (await _repo.registeredQueries('local')).toList()..sort();
       final pending = await _repo.reviewableWordCount('local');
       if (mounted) {
@@ -135,6 +148,7 @@ class _HomeState extends State<_Home> {
   }
 
   Future<void> _import() async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _importMessage = null;
@@ -171,11 +185,33 @@ class _HomeState extends State<_Home> {
     }
   }
 
+  Future<void> _backup() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _backupOpen = true;
+    });
+    await showWordAIGlassDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => LearningBackupDialog(
+        service: LearningBackupService(_repo),
+        files: _backupFiles,
+      ),
+    );
+    if (mounted) {
+      setState(() => _backupOpen = false);
+      await _load();
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('WordAI Community'), actions: [
           PopupMenuButton<Locale>(
-              icon: const Icon(Icons.language),
+              enabled: !_busy,
+              tooltip: t('Language', '语言'),
+              icon: const Reicon(ReiconGlyph.globe),
               onSelected: widget.onLocale,
               itemBuilder: (_) => const [
                     PopupMenuItem(value: Locale('en'), child: Text('English')),
@@ -190,68 +226,79 @@ class _HomeState extends State<_Home> {
             child: Center(
                 child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 760),
-                    child: Column(children: [
-                      Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                    t('Learn locally. Keep your progress.',
-                                        '离线学习，进度保存在本机。'),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .headlineSmall),
-                                const SizedBox(height: 8),
-                                Text(t(
-                                    '${_words.length} words · $_pending left to learn',
-                                    '${_words.length} 个词 · $_pending 个待学习')),
-                                const SizedBox(height: 16),
-                                Wrap(spacing: 12, runSpacing: 8, children: [
-                                  FilledButton.icon(
-                                      onPressed: _busy || _words.isEmpty
-                                          ? null
-                                          : () async {
-                                              await context.push('/review',
-                                                  extra: _words);
-                                              await _load();
-                                            },
-                                      icon: const Icon(Icons.school),
-                                      label:
-                                          Text(t('Start flashcards', '开始闪卡'))),
-                                  OutlinedButton.icon(
-                                      onPressed: _busy ? null : _import,
-                                      icon: const Icon(Icons.file_open),
-                                      label:
-                                          Text(t('Import dictionary', '导入词库'))),
-                                  IconButton(
-                                      onPressed: _busy ? null : _load,
-                                      tooltip: t('Retry', '重试'),
-                                      icon: const Icon(Icons.refresh)),
-                                ]),
-                                for (final message in [
-                                  _importMessage,
-                                  _loadError
-                                ].whereType<String>())
-                                  Padding(
-                                      padding: const EdgeInsets.only(top: 12),
-                                      child: Text(message)),
-                              ])),
-                      if (_busy) const LinearProgressIndicator(),
-                      Expanded(
-                          child: ListView.builder(
-                              itemCount: _words.length,
-                              itemBuilder: (_, i) => ListTile(
-                                  leading: const Icon(Icons.menu_book_outlined),
-                                  title: Text(_words[i]),
-                                  trailing: const Icon(Icons.chevron_right),
-                                  onTap: _busy
-                                      ? null
-                                      : () async {
-                                          await context.push('/review',
-                                              extra: [_words[i]]);
-                                          await _load();
-                                        }))),
+                    child: CustomScrollView(slivers: [
+                      SliverToBoxAdapter(
+                          child: Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                        t('Learn locally. Keep your progress.',
+                                            '离线学习，进度保存在本机。'),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .headlineSmall),
+                                    const SizedBox(height: 8),
+                                    Text(t(
+                                        '${_words.length} words · $_pending left to learn',
+                                        '${_words.length} 个词 · $_pending 个待学习')),
+                                    const SizedBox(height: 16),
+                                    Wrap(spacing: 12, runSpacing: 8, children: [
+                                      FilledButton.icon(
+                                          onPressed: _busy || _words.isEmpty
+                                              ? null
+                                              : () async {
+                                                  await context.push('/review',
+                                                      extra: _words);
+                                                  await _load();
+                                                },
+                                          icon: const Reicon(ReiconGlyph.book),
+                                          label: Text(
+                                              t('Start flashcards', '开始闪卡'))),
+                                      OutlinedButton.icon(
+                                          onPressed: _busy ? null : _import,
+                                          icon: const Reicon(
+                                              ReiconGlyph.folderOpen),
+                                          label: Text(
+                                              t('Import dictionary', '导入词库'))),
+                                      OutlinedButton.icon(
+                                          onPressed: _busy ? null : _backup,
+                                          icon:
+                                              const Reicon(ReiconGlyph.archive),
+                                          label: Text(
+                                              t('Learning backup', '学习备份'))),
+                                      IconButton(
+                                          onPressed: _busy ? null : _load,
+                                          tooltip: t('Retry', '重试'),
+                                          icon: const Reicon(
+                                              ReiconGlyph.refresh)),
+                                    ]),
+                                    for (final message in [
+                                      _importMessage,
+                                      _loadError
+                                    ].whereType<String>())
+                                      Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 12),
+                                          child: Text(message)),
+                                  ]))),
+                      if (_busy && !_backupOpen)
+                        const SliverToBoxAdapter(
+                            child: LinearProgressIndicator()),
+                      SliverList.builder(
+                          itemCount: _words.length,
+                          itemBuilder: (_, i) => ListTile(
+                              leading: const Reicon(ReiconGlyph.book),
+                              title: Text(_words[i]),
+                              trailing: const Reicon(ReiconGlyph.chevronRight),
+                              onTap: _busy
+                                  ? null
+                                  : () async {
+                                      await context
+                                          .push('/review', extra: [_words[i]]);
+                                      await _load();
+                                    })),
                     ])))),
       );
 }
