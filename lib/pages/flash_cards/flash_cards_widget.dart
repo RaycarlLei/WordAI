@@ -480,6 +480,18 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
         await _requestExit();
         return;
       }
+      if (error is ReviewQuestionChanged) {
+        // Content can change without advancing the session or learning stage.
+        // Re-prepare this position; a storage failure during preparation uses
+        // the existing Retry state instead of leaving a stale answer enabled.
+        setState(() {
+          _submitting = false;
+          _selectedIndex = null;
+          _question = null;
+        });
+        await _advanceToNext(showPreparation: true);
+        return;
+      }
       if (await _recoverAdvancedAnswer(session, question)) return;
       if (!mounted) return;
       if (!_accountIsCurrent) {

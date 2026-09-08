@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:word_a_i/pages/flash_cards/flash_cards_widget.dart';
+import 'package:word_a_i/sample_words.dart';
+import 'package:word_a_i/services/dictionary_import.dart';
 import 'package:word_a_i/services/learning_repository.dart';
 import 'package:word_a_i/services/review_pronunciation.dart';
 import 'package:word_a_i/services/wordai_dossier.dart';
@@ -340,6 +343,111 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  for (final failPreparation in [false, true]) {
+    testWidgets(
+        failPreparation
+            ? 'a changed question survives a failed reprepare and a manual Retry'
+            : 'an imported change refreshes the displayed question before scoring',
+        (tester) async {
+      final state = await prepare(tester, 0);
+      await tester.runAsync(() async {
+        for (final sample in sampleWords().take(4)) {
+          await state.repository.registerDossier('u', sample);
+        }
+      });
+      final repository = _FailOnePreparationRepository(state.db);
+      await tester.pumpWidget(app(FlashCardsWidget(
+        repository: repository,
+        testUid: 'u',
+        initialWords: const ['cat'],
+        dossierLoader: (_, __) => const Stream<WordAiDossierUpdate>.empty(),
+      )));
+      await waitForReview(tester);
+      final session =
+          (await tester.runAsync(() => repository.resumeActiveSession('u')))!;
+      final old = (await tester
+          .runAsync(() => repository.buildQuestion(session, 'en')))!;
+      const updatedMeaning = 'a newly imported meaning for this word';
+      await tester.runAsync(() async {
+        final replacement = sampleWords().first.toJson();
+        (replacement['senses'] as List).first['definition_en'] = updatedMeaning;
+        await importDictionary(
+            Stream.value(utf8.encode(jsonEncode(replacement))),
+            repository: repository,
+            uid: 'u');
+      });
+      repository.failNextBuild = failPreparation;
+      await tester.tap(find.text(old.options[old.correctIndex]));
+
+      if (failPreparation) {
+        await _waitUntil(
+            tester, () => find.text('Retry').evaluate().isNotEmpty);
+        expect(find.text('Unable to prepare the next question. Please retry.'),
+            findsOneWidget);
+        expect(repository.preparationFailures, 1);
+        await tester.tap(find.text('Retry'));
+      }
+      await _waitUntil(
+          tester, () => find.text(updatedMeaning).evaluate().isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(find.text(old.options[old.correctIndex]), findsNothing);
+      expect(
+          find.text('Progress was not saved. Please try again.'), findsNothing);
+      final preserved =
+          (await tester.runAsync(() => repository.sessionById(session.id)))!;
+      expect(preserved.currentIndex, 0);
+      expect(preserved.completedCount, 0);
+      expect(await tester.runAsync(() => state.db.query('review_attempts')),
+          isEmpty);
+
+      await tester.tap(find.text(updatedMeaning));
+      for (var index = 0; index < 100; index++) {
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 5)));
+        await tester.pump();
+        final rows =
+            (await tester.runAsync(() => state.db.query('review_attempts')))!;
+        if (rows.isNotEmpty) break;
+      }
+      expect(await tester.runAsync(() => state.db.query('review_attempts')),
+          hasLength(1));
+      expect(
+          (await tester
+                  .runAsync(() => repository.targetById(old.target.targetId)))!
+              .stage,
+          LearningStage.contextPassed);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+}
+
+Future<void> _waitUntil(WidgetTester tester, bool Function() ready) async {
+  for (var index = 0; index < 150 && !ready(); index++) {
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  expect(ready(), isTrue, reason: 'The expected review state did not appear');
+}
+
+class _FailOnePreparationRepository extends LearningRepository {
+  _FailOnePreparationRepository(super.database) : super.forTesting();
+  bool failNextBuild = false;
+  int preparationFailures = 0;
+
+  @override
+  Future<ReviewQuestion?> buildQuestion(
+      ReviewSessionState session, String languageCode) {
+    if (failNextBuild) {
+      failNextBuild = false;
+      preparationFailures++;
+      return Future.error(
+          StateError('One-shot storage failure during preparation'));
+    }
+    return super.buildQuestion(session, languageCode);
+  }
 }
 
 class _LostAcknowledgementRepository extends LearningRepository {

@@ -120,6 +120,14 @@ class ReviewQuestion {
   ReviewTestType get type => target.requiredTest;
 }
 
+/// The caller must prepare the current question again before submitting.
+/// This is distinct from an operational database failure, which is retryable
+/// without changing either the question or the session.
+class ReviewQuestionChanged extends StateError {
+  ReviewQuestionChanged()
+      : super('The review question changed. Prepare it again.');
+}
+
 @immutable
 class ReviewSessionState {
   const ReviewSessionState({
@@ -197,7 +205,7 @@ class LearningRepository {
   static final instance = LearningRepository._();
   static const _uuid = Uuid();
   static const _databaseName = 'wordai_learning.db';
-  static const _databaseVersion = 3;
+  static const _databaseVersion = 4;
   static const _sessionStateFields = <String>[
     'started_at',
     'ended_at',
@@ -330,7 +338,14 @@ class LearningRepository {
     int newVersion,
   ) async {
     if (oldVersion < 2) await _createSyncStateTable(db);
-    if (oldVersion < 3) await _createReviewQuestionsTable(db);
+    if (oldVersion < 3) {
+      await _createReviewQuestionsTable(db);
+    } else if (oldVersion < 4) {
+      // NULL identifies a legacy snapshot. Its original content cannot be
+      // inferred from the current dictionary; rebuild it when next requested.
+      await db.execute(
+          'ALTER TABLE review_questions ADD COLUMN content_fingerprint TEXT');
+    }
   }
 
   static Future<void> _createReviewQuestionsTable(DatabaseExecutor db) =>
@@ -342,6 +357,7 @@ class LearningRepository {
             CHECK(language_code IN ('en', 'zh_Hans', 'zh_Hant')),
           options_json TEXT NOT NULL,
           correct_index INTEGER NOT NULL CHECK(correct_index BETWEEN 0 AND 3),
+          content_fingerprint TEXT,
           created_at INTEGER NOT NULL,
           PRIMARY KEY(session_id, target_id, language_code),
           FOREIGN KEY(session_id) REFERENCES review_sessions(session_id)
@@ -540,17 +556,9 @@ class LearningRepository {
     );
     ReviewSessionState? selected;
     for (final row in rows) {
+      late ReviewSessionState session;
       try {
-        final session = _sessionFromMap(row);
-        if (scope != null && !await _sessionMatchesScope(db, session, scope)) {
-          await _retireSession(db, uid, session.id, 'scope_changed');
-          continue;
-        }
-        if (selected == null) {
-          selected = session;
-        } else {
-          await _retireSession(db, uid, session.id, 'superseded_session');
-        }
+        session = _sessionFromMap(row);
       } catch (error, stack) {
         // Preserve answers and original payload for diagnostics; retire only
         // this unusable session so Retry can create a healthy round.
@@ -562,6 +570,18 @@ class LearningRepository {
         );
         _reportSyncError('learning.invalidSession',
             const FormatException('Invalid saved review session'), stack);
+        continue;
+      }
+      // Only decoding can establish that a payload is invalid. A failed read
+      // or retirement write must propagate, leaving a valid round retryable.
+      if (scope != null && !await _sessionMatchesScope(db, session, scope)) {
+        await _retireSession(db, uid, session.id, 'scope_changed');
+        continue;
+      }
+      if (selected == null) {
+        selected = session;
+      } else {
+        await _retireSession(db, uid, session.id, 'superseded_session');
       }
     }
     return selected;
@@ -741,43 +761,33 @@ class LearningRepository {
   ) async {
     if (session.isComplete || session.currentIndex < 0) return null;
     final db = await database;
-    final sessionRows = await db.query(
-      'review_sessions',
-      where: 'session_id = ? AND status = ?',
-      whereArgs: [session.id, 'active'],
-      limit: 1,
-    );
-    if (sessionRows.isEmpty) return null;
-    final persistedSession = _sessionFromMap(sessionRows.first);
-    if (persistedSession.currentIndex != session.currentIndex ||
-        persistedSession.targetIds.length != session.targetIds.length ||
-        persistedSession.currentIndex >= persistedSession.targetIds.length ||
-        persistedSession.targetIds[persistedSession.currentIndex] !=
-            session.targetIds[session.currentIndex]) {
-      return null;
-    }
-    final target = await targetById(session.targetIds[session.currentIndex]);
-    if (target == null || target.stage == LearningStage.learned) return null;
     final language = _reviewLanguage(languageCode);
+    final prepared = await db
+        .transaction<({LearningTarget? target, ReviewQuestion? saved})>(
+            (txn) async {
+      final target = await _currentQuestionTarget(txn, session);
+      if (target == null ||
+          target.stage == LearningStage.learned ||
+          !_isMeaningValid(
+              _cleanMeaning(target.meaningFor(language)), language) ||
+          (target.requiredTest == ReviewTestType.context &&
+              target.exampleEnglish.trim().isEmpty)) {
+        return (target: null, saved: null);
+      }
+      // Read the target and its saved choices in one SQLite snapshot. Reopening
+      // a round does not depend on the current distractor pool or a network call.
+      final saved = await _readQuestionSnapshot(txn,
+          sessionId: session.id, target: target, languageCode: language);
+      return (target: target, saved: saved);
+    });
+    final target = prepared.target;
+    if (target == null) return null;
+    if (prepared.saved != null) return prepared.saved;
     final correct = _cleanMeaning(target.meaningFor(language));
-    if (!_isMeaningValid(correct, language) ||
-        (target.requiredTest == ReviewTestType.context &&
-            target.exampleEnglish.trim().isEmpty)) {
-      return null;
-    }
     final seed = int.parse(
       _hash('${session.id}:${target.targetId}:$language').substring(0, 8),
       radix: 16,
     );
-    final saved = await _readQuestionSnapshot(
-      db,
-      sessionId: session.id,
-      target: target,
-      languageCode: language,
-      currentCorrect: correct,
-    );
-    if (saved != null) return saved;
-
     final localCandidates = await _learningMeaningCandidates(
       target,
       language,
@@ -796,30 +806,28 @@ class LearningRepository {
       ],
       seed: seed,
     );
-    if (distractors.length < 3) return null;
-    final random = Random(seed);
-    final options = distractors.toList(growable: true);
-    final correctIndex = random.nextInt(4);
-    options.insert(correctIndex, correct);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final stillCurrent = await db.transaction<bool>((txn) async {
-      final currentRows = await txn.query(
-        'review_sessions',
-        columns: const <String>['current_index', 'target_ids_json'],
-        where: 'session_id = ? AND status = ?',
-        whereArgs: [session.id, 'active'],
-        limit: 1,
-      );
-      if (currentRows.isEmpty) return false;
-      final index = (currentRows.first['current_index'] as num?)?.toInt() ?? -1;
-      final ids = jsonDecode(currentRows.first['target_ids_json'] as String);
-      if (ids is! List ||
-          index != session.currentIndex ||
-          index < 0 ||
-          index >= ids.length ||
-          ids[index] != target.targetId) {
-        return false;
+    return db.transaction<ReviewQuestion?>((txn) async {
+      final current = await _currentQuestionTarget(txn, session);
+      if (current == null) return null;
+      if (_questionContent(current, language) !=
+          _questionContent(target, language)) {
+        // Do not report an unavailable target: that would cause the caller to
+        // skip it. Preparation may be retried using the newly imported content.
+        throw ReviewQuestionChanged();
       }
+      final saved = await _readQuestionSnapshot(txn,
+          sessionId: session.id, target: current, languageCode: language);
+      if (saved != null) return saved;
+      if (distractors.length < 3) return null;
+      final options = distractors.toList(growable: true);
+      final correctIndex = Random(seed).nextInt(4);
+      options.insert(correctIndex, correct);
+      final question = ReviewQuestion(
+        target: current,
+        options: List<String>.unmodifiable(options),
+        correctIndex: correctIndex,
+        languageCode: language,
+      );
       await txn.insert(
         'review_questions',
         {
@@ -828,20 +836,36 @@ class LearningRepository {
           'language_code': language,
           'options_json': jsonEncode(options),
           'correct_index': correctIndex,
-          'created_at': now,
+          'content_fingerprint': _questionFingerprint(question),
+          'created_at': DateTime.now().millisecondsSinceEpoch,
         },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
       );
-      return true;
+      return question;
     });
-    if (!stillCurrent) return null;
-    return _readQuestionSnapshot(
-      db,
-      sessionId: session.id,
-      target: target,
-      languageCode: language,
-      currentCorrect: correct,
+  }
+
+  Future<LearningTarget?> _currentQuestionTarget(
+      DatabaseExecutor db, ReviewSessionState session) async {
+    final rows = await db.query(
+      'review_sessions',
+      where: 'session_id = ? AND status = ?',
+      whereArgs: [session.id, 'active'],
+      limit: 1,
     );
+    if (rows.isEmpty) return null;
+    final saved = _sessionFromMap(rows.first);
+    if (saved.currentIndex != session.currentIndex ||
+        !listEquals(saved.targetIds, session.targetIds) ||
+        saved.isComplete) {
+      return null;
+    }
+    final targets = await db.query(
+      'learning_progress',
+      where: 'target_id = ? AND uid = ?',
+      whereArgs: [saved.targetIds[saved.currentIndex], rows.first['uid']],
+      limit: 1,
+    );
+    return targets.isEmpty ? null : LearningTarget.fromMap(targets.first);
   }
 
   Future<List<ReviewMeaningCandidate>> _loadMeaningPool(
@@ -943,7 +967,6 @@ class LearningRepository {
     required String sessionId,
     required LearningTarget target,
     required String languageCode,
-    required String currentCorrect,
   }) async {
     final rows = await db.query(
       'review_questions',
@@ -965,15 +988,20 @@ class LearningRepository {
       final options = decoded.cast<String>();
       if (options.toSet().length != 4 ||
           options.map(_answerSignature).toSet().length != 4 ||
-          _cleanMeaning(options[correctIndex]) != currentCorrect) {
+          _cleanMeaning(options[correctIndex]) !=
+              _cleanMeaning(target.meaningFor(languageCode))) {
         throw const FormatException('Stale saved review question');
       }
-      return ReviewQuestion(
+      final question = ReviewQuestion(
         target: target,
         options: List<String>.unmodifiable(options),
         correctIndex: correctIndex,
         languageCode: languageCode,
       );
+      if (rows.first['content_fingerprint'] != _questionFingerprint(question)) {
+        throw const FormatException('Unbound or stale saved review question');
+      }
+      return question;
     } on Object {
       await db.delete(
         'review_questions',
@@ -983,6 +1011,32 @@ class LearningRepository {
       return null;
     }
   }
+
+  // Versioned, finite dependencies of the displayed question and its answer.
+  // Other locales, unused translations, progress counters, global revisions,
+  // and the live distractor pool are deliberately not part of this identity.
+  static String _questionContent(LearningTarget target, String languageCode) =>
+      jsonEncode([
+        'review-content-v1',
+        target.targetId,
+        target.stage.value,
+        languageCode,
+        target.word,
+        target.partOfSpeech,
+        _cleanMeaning(target.meaningFor(languageCode)),
+        if (target.requiredTest == ReviewTestType.context) ...[
+          target.exampleEnglish,
+          target.targetForm,
+        ],
+      ]);
+
+  static String _questionFingerprint(ReviewQuestion question,
+          {LearningTarget? target}) =>
+      _hash(jsonEncode([
+        _questionContent(target ?? question.target, question.languageCode),
+        question.options,
+        question.correctIndex,
+      ]));
 
   static String _reviewLanguage(String languageCode) {
     if (languageCode == 'zh_Hant') return 'zh_Hant';
@@ -1075,7 +1129,11 @@ class LearningRepository {
       }
       final questionRows = await txn.query(
         'review_questions',
-        columns: const <String>['options_json', 'correct_index'],
+        columns: const <String>[
+          'options_json',
+          'correct_index',
+          'content_fingerprint'
+        ],
         where: 'session_id = ? AND target_id = ? AND language_code = ?',
         whereArgs: [
           session.id,
@@ -1085,10 +1143,15 @@ class LearningRepository {
         limit: 1,
       );
       if (questionRows.isEmpty) {
-        throw StateError('The saved review question is missing.');
+        throw ReviewQuestionChanged();
       }
-      final persistedOptions =
-          jsonDecode(questionRows.first['options_json'] as String);
+      final Object? persistedOptions;
+      try {
+        persistedOptions =
+            jsonDecode(questionRows.first['options_json'] as String);
+      } on FormatException {
+        throw ReviewQuestionChanged();
+      }
       final persistedCorrect =
           (questionRows.first['correct_index'] as num?)?.toInt() ?? -1;
       if (persistedOptions is! List ||
@@ -1098,7 +1161,7 @@ class LearningRepository {
           persistedCorrect != question.correctIndex ||
           persistedCorrect < 0 ||
           persistedCorrect >= persistedOptions.length) {
-        throw StateError('The review question does not match its saved copy.');
+        throw ReviewQuestionChanged();
       }
       correct = selectedIndex == persistedCorrect;
       final progressRows = await txn.query(
@@ -1108,6 +1171,14 @@ class LearningRepository {
         limit: 1,
       );
       if (progressRows.isEmpty) throw StateError('Learning target is missing.');
+      final current = LearningTarget.fromMap(progressRows.first);
+      final fingerprint = questionRows.first['content_fingerprint'];
+      if (fingerprint != _questionFingerprint(question) ||
+          fingerprint != _questionFingerprint(question, target: current)) {
+        // Validation and the answer's writes share one transaction. Reimports
+        // preserve earned progress but cannot credit this obsolete question.
+        throw ReviewQuestionChanged();
+      }
       previous = LearningStageValue.fromInt(progressRows.first['stage']);
       if (previous == LearningStage.learned) {
         throw StateError(
