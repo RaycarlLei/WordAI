@@ -7,7 +7,7 @@ mkdir -p artifacts/android-backup
 collect_results() {
   result=$?
   trap - EXIT
-  timeout 30s adb pull /sdcard/Android/data/org.wordai.community.word_a_i/files/backup-test-artifacts artifacts/android-backup/ 2>/dev/null || true
+  timeout 30s adb pull /data/local/tmp/wordai-backup-test-artifacts artifacts/android-backup/ 2>/dev/null || true
   timeout 15s adb logcat -d -v threadtime AndroidRuntime:E '*:S' > artifacts/android-backup/android-runtime.log || true
   exit "$result"
 }

@@ -5,10 +5,16 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.lifecycle.Lifecycle
+import android.util.Base64
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Condition
 import androidx.test.uiautomator.textAsString
@@ -18,7 +24,7 @@ import io.flutter.plugin.common.MethodChannel
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -93,12 +99,27 @@ class BackupDocumentsTest {
     @Test fun recreateFailsOldRequestAndLateCallbackCannotConsumeNewRequest() = withApp("recreate") { scenario ->
         val old = begin(scenario, "before-recreate.json")
         awaitPicker("before-recreate.json")
-        scenario.recreate()
-        assertEquals("unavailable", old.result.await().error)
-        // Dismiss the old picker if it is still visible; its real late cancel
-        // must also be ignored by the replacement Activity's new handler.
-        if (device.currentPackageName?.endsWith(".documentsui") == true) device.pressBack()
-        scenario.moveToState(Lifecycle.State.RESUMED)
+        val replaced = CountDownLatch(1)
+        val lifecycle = ActivityLifecycleMonitorRegistry.getInstance()
+        val listener = ActivityLifecycleCallback { activity, stage ->
+            if (activity is MainActivity && stage == Stage.CREATED &&
+                activity.backupDocuments != null && activity.backupDocuments !== old.handler) replaced.countDown()
+        }
+        scenario.onActivity {
+            lifecycle.addLifecycleCallback(listener)
+            // ActivityScenario.recreate() first forces RESUMED, which cannot
+            // happen while DocumentsUI owns the foreground. Recreate the real
+            // stopped Activity while its outstanding picker remains open.
+            it.recreate()
+        }
+        try {
+            assertEquals("unavailable", old.result.await().error)
+            assertTrue("Activity replacement was not observed", replaced.await(UI_TIMEOUT, TimeUnit.MILLISECONDS))
+        } finally {
+            instrumentation.runOnMainSync { lifecycle.removeLifecycleCallback(listener) }
+        }
+        // The old picker's real cancellation now reaches the replacement owner.
+        dismissPickerToApplication()
         val next = begin(scenario, "after-recreate.json")
         assertNotSame(old.handler, next.handler)
         assertNotEquals(old.code, next.code)
@@ -150,8 +171,7 @@ class BackupDocumentsTest {
         try {
             awaitPicker("stall-deadline.json")
             // MainActivity's normal handler does not own this test helper's code.
-            device.pressBack()
-            scenario.moveToState(Lifecycle.State.RESUMED)
+            dismissPickerToApplication()
             scenario.onActivity { assertTrue(handler.onActivityResult(code, Activity.RESULT_OK, Intent().setData(uri))) }
             resolver.call(CONTROL, "entered", id, null)
             assertEquals("save_failed", result.await().error)
@@ -183,7 +203,7 @@ class BackupDocumentsTest {
             assertEquals("Late provider completion cannot reply again", 1, result.values.size)
             assertEquals("save_failed", result.values.single().error)
             assertEquals(1, inspect().getInt("writeOpens"))
-            device.pressBack()
+            dismissPickerToApplication()
         } finally {
             resolver.call(CONTROL, "release", id, null)
             scenario.onActivity { handler.detach() }
@@ -215,13 +235,46 @@ class BackupDocumentsTest {
 
     private fun chooseStorageAndSave() = uiAutomator {
         // API 35 DocumentsUI, English emulator. No screen coordinates or sleeps.
-        onElementOrNull(0) { contentDescription?.toString() == "Show roots" }?.click()
-        onElement(UI_TIMEOUT) { textAsString() == BackupTestDocumentsProvider.ROOT_TITLE }.click()
+        val picker = requireNotNull(device.currentPackageName)
+        assertTrue(picker.endsWith(".documentsui"))
+        if (onElementOrNull(0) { contentDescription?.toString() == "Show roots" } != null) {
+            clickFresh(By.pkg(picker).desc("Show roots"))
+        }
+        // The drawer rebinds root rows while its provider query completes.
+        // Reacquire only a stale object, and only inside the actual roots list.
+        clickFresh(By.pkg(picker).text(BackupTestDocumentsProvider.ROOT_TITLE)
+            .hasAncestor(By.res(picker, "roots_list")))
         onElement(UI_TIMEOUT) {
             textAsString() == BackupTestDocumentsProvider.ROOT_TITLE &&
                 parent?.viewIdResourceName?.endsWith(":id/toolbar") == true
         }
-        onElement(UI_TIMEOUT) { viewIdResourceName == "android:id/button1" && isEnabled }.click()
+        clickFresh(By.pkg(picker).res("android:id/button1").enabled(true))
+    }
+
+    private fun clickFresh(selector: BySelector) {
+        assertTrue("Picker control never became actionable", device.wait(object : Condition<UiDevice, Boolean> {
+            override fun apply(device: UiDevice): Boolean {
+                val element = device.findObject(selector) ?: return false
+                return try {
+                    element.click()
+                    true
+                } catch (_: StaleObjectException) {
+                    false
+                }
+            }
+        }, UI_TIMEOUT))
+    }
+
+    private fun dismissPickerToApplication() {
+        val applicationVisible = object : Condition<UiDevice, Boolean> {
+            override fun apply(device: UiDevice): Boolean = device.currentPackageName == APP_PACKAGE
+        }
+        repeat(4) {
+            if (applicationVisible.apply(device)) return
+            device.pressBack()
+            if (device.wait(applicationVisible, 1_000)) return
+        }
+        fail("DocumentsUI did not return to the application")
     }
 
     private fun cancelPicker(result: RecordingResult) {
@@ -248,10 +301,15 @@ class BackupDocumentsTest {
             block(scenario)
         } catch (error: Throwable) {
             runCatching {
-                val directory = File(instrumentation.targetContext.getExternalFilesDir(null), "backup-test-artifacts")
-                check(directory.isDirectory || directory.mkdirs())
-                device.takeScreenshot(File(directory, "$label.png"))
-                device.dumpWindowHierarchy(File(directory, "$label.xml"))
+                // UTP can uninstall the app before the host collects results.
+                // Keep only synthetic failure diagnostics in shell-owned tmp.
+                val directory = "/data/local/tmp/wordai-backup-test-artifacts"
+                device.executeShellCommand("mkdir -p $directory")
+                device.executeShellCommand("screencap -p $directory/$label.png")
+                val hierarchy = ByteArrayOutputStream()
+                device.dumpWindowHierarchy(hierarchy)
+                val encoded = Base64.encodeToString(hierarchy.toByteArray(), Base64.NO_WRAP)
+                device.executeShellCommand("sh -c 'echo $encoded | base64 -d > $directory/$label.xml'")
             }
             throw error
         } finally {
@@ -286,6 +344,7 @@ class BackupDocumentsTest {
 
     companion object {
         private const val UI_TIMEOUT = 15_000L
+        private const val APP_PACKAGE = "org.wordai.community.word_a_i"
         private val CONTROL = Uri.parse("content://org.wordai.community.word_a_i.test.control")
     }
 }

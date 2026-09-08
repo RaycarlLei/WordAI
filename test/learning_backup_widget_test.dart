@@ -214,7 +214,7 @@ void main() {
     // Home remains busy beneath the modal; wait for the preview itself.
     await tester.pumpAndSettle();
     expect(find.text('Review backup'), findsOneWidget);
-    expect(find.text('1 meanings · 0 answers · 0 sessions'), findsOneWidget);
+    expect(find.text('1 meaning · 0 answers · 0 sessions'), findsOneWidget);
     expect(
         await tester
             .runAsync(() => state.repository.registeredQueries('local')),
@@ -239,7 +239,7 @@ void main() {
     expect(find.textContaining('Learning data restored.'), findsOneWidget);
     await tester.tap(find.text('Close'));
     await _idle(tester);
-    expect(find.text('1 words · 1 left to learn'), findsOneWidget);
+    expect(find.text('1 word · 1 left to learn'), findsOneWidget);
     await tester.tap(find.byTooltip('Retry'));
     await _idle(tester);
     expect(
@@ -250,7 +250,7 @@ void main() {
     await tester.pumpWidget(CommunityApp(
         homeRepository: state.repository, backupFiles: state.files));
     await _idle(tester);
-    expect(find.text('1 words · 1 left to learn'), findsOneWidget);
+    expect(find.text('1 word · 1 left to learn'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

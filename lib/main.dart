@@ -241,7 +241,7 @@ class _HomeState extends State<_Home> {
                                             .headlineSmall),
                                     const SizedBox(height: 8),
                                     Text(t(
-                                        '${_words.length} words · $_pending left to learn',
+                                        '${_words.length} ${_words.length == 1 ? 'word' : 'words'} · $_pending left to learn',
                                         '${_words.length} 个词 · $_pending 个待学习')),
                                     const SizedBox(height: 16),
                                     Wrap(spacing: 12, runSpacing: 8, children: [

@@ -116,6 +116,9 @@ class _LearningBackupDialogState extends State<LearningBackupDialog> {
     return '${localizations.formatMediumDate(date)} · ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(date))}';
   }
 
+  String _count(int count, String unit) =>
+      '$count $unit${count == 1 ? '' : 's'}';
+
   @override
   Widget build(BuildContext context) {
     final backup = _candidate;
@@ -166,7 +169,7 @@ class _LearningBackupDialogState extends State<LearningBackupDialog> {
               Text(_date(backup)),
               const SizedBox(height: 12),
               Text(t(
-                  '${backup.progressCount} meanings · ${backup.attemptCount} answers · ${backup.sessionCount} sessions',
+                  '${_count(backup.progressCount, 'meaning')} · ${_count(backup.attemptCount, 'answer')} · ${_count(backup.sessionCount, 'session')}',
                   '${backup.progressCount} 个词义 · ${backup.attemptCount} 次答题 · ${backup.sessionCount} 轮学习',
                   '${backup.progressCount} 個詞義 · ${backup.attemptCount} 次答題 · ${backup.sessionCount} 輪學習')),
               const SizedBox(height: 16),
