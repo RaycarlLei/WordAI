@@ -21,7 +21,9 @@ flutter run
 Android, iOS and macOS projects are included. Device signing for iOS/macOS is your
 own configuration; no signing team, certificate or production backend is bundled.
 The [CI workflow](.github/workflows/checks.yml) runs analysis, tests and an Android
-debug build. Platform support beyond those checks should be verified on the target device.
+debug build. Analysis and tests run on Flutter 3.44.0 and 3.47.2; the latter also
+produces a downloadable debug APK in the Actions run. This is a development build,
+not a signed store release. Platform support beyond those checks should be verified on the target device.
 
 ## What the app does
 
@@ -40,6 +42,8 @@ debug build. Platform support beyond those checks should be verified on the targ
 | Problem | Implementation | Regression tests |
 |---|---|---|
 | Persist meaning-level learning progress | [learning_repository.dart](lib/services/learning_repository.dart) | [learning_repository_test.dart](test/learning_repository_test.dart) |
+| Preserve imported content across refreshes | [dictionary_import.dart](lib/services/dictionary_import.dart) | [home import](test/home_import_widget_test.dart), [dictionary validation](test/dictionary_import_test.dart) |
+| Bound a slow speech download | [community_gateway.dart](lib/services/community_gateway.dart) | [gateway lifecycle](test/community_gateway_test.dart) |
 | Prepare a usable review from available content | [review_preparation.dart](lib/services/review_preparation.dart) | [review_preparation_test.dart](test/review_preparation_test.dart) |
 | Coordinate pronunciation during review | [review_pronunciation.dart](lib/services/review_pronunciation.dart) | [review_pronunciation_test.dart](test/review_pronunciation_test.dart), [playback arbitration](test/tts_playback_arbiter_test.dart) |
 | Keep review states explicit | [review availability tests](test/review_availability_widget_test.dart) | [loading-state tests](test/review_loading_widget_test.dart) |
@@ -56,10 +60,14 @@ Choose **Import JSON** on the home screen. A file may contain one entry or an ar
 using the S6 schema in [wordai_dossier.dart](lib/services/wordai_dossier.dart).
 See [examples/words.json](examples/words.json).
 
-Files are validated before writes, with a limit of 10 MB and 20,000 entries.
+Files are validated before writes, with a limit of 10 MiB actually read and 20,000
+entries. Empty files, empty arrays and lookup abstentions are not importable.
 Reimporting an entry updates its content while preserving learning progress. A
 storage failure may leave earlier entries imported; retrying is supported. The
 import is not represented as an all-or-nothing database transaction.
+
+Refreshing the home screen seeds only missing sample meanings. It does not
+overwrite an imported replacement or reset its learning state.
 
 Import only content you have permission to use. Production third-party dictionaries
 and audio collections are not distributed here.

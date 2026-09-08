@@ -1,18 +1,40 @@
 name: Community checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
+concurrency:
+  group: community-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        flutter: ['3.44.0', '3.47.2']
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ matrix.flutter }}
           cache: true
       - run: python3 scripts/check_public_tree.py
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --debug
+        if: matrix.flutter == '3.47.2'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.flutter == '3.47.2'
+        with:
+          name: wordai-android-debug
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

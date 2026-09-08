@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -9,7 +8,7 @@ import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/internationalization.dart';
 import 'pages/flash_cards/flash_cards_widget.dart';
 import 'services/learning_repository.dart';
-import 'services/wordai_dossier.dart';
+import 'services/dictionary_import.dart';
 import 'sample_words.dart';
 
 Future<void> main() async {
@@ -23,7 +22,13 @@ Future<void> main() async {
 }
 
 class CommunityApp extends StatefulWidget {
-  const CommunityApp({super.key});
+  const CommunityApp({
+    super.key,
+    @visibleForTesting this.homeRepository,
+    @visibleForTesting this.selectDictionary,
+  });
+  final LearningRepository? homeRepository;
+  final Future<XFile?> Function()? selectDictionary;
   @override
   State<CommunityApp> createState() => _CommunityAppState();
 }
@@ -33,8 +38,10 @@ class _CommunityAppState extends State<CommunityApp> {
   late final GoRouter _router = GoRouter(routes: [
     GoRoute(
         path: '/',
-        builder: (_, __) =>
-            _Home(onLocale: (locale) => setState(() => _locale = locale))),
+        builder: (_, __) => _Home(
+            repository: widget.homeRepository ?? LearningRepository.instance,
+            selectDictionary: widget.selectDictionary,
+            onLocale: (locale) => setState(() => _locale = locale))),
     GoRoute(
         path: '/review',
         builder: (_, state) => FlashCardsWidget(
@@ -75,17 +82,23 @@ class _CommunityAppState extends State<CommunityApp> {
 }
 
 class _Home extends StatefulWidget {
-  const _Home({required this.onLocale});
+  const _Home(
+      {required this.onLocale,
+      required this.repository,
+      this.selectDictionary});
   final ValueChanged<Locale> onLocale;
+  final LearningRepository repository;
+  final Future<XFile?> Function()? selectDictionary;
   @override
   State<_Home> createState() => _HomeState();
 }
 
 class _HomeState extends State<_Home> {
-  final _repo = LearningRepository.instance;
+  LearningRepository get _repo => widget.repository;
   List<String> _words = [];
   bool _busy = true;
-  String? _message;
+  String? _importMessage;
+  String? _loadError;
   int _pending = 0;
   @override
   void initState() {
@@ -96,9 +109,10 @@ class _HomeState extends State<_Home> {
   String t(String en, String zh) =>
       Localizations.localeOf(context).languageCode == 'zh' ? zh : en;
   Future<void> _load() async {
+    if (mounted) setState(() => _busy = true);
     try {
       for (final d in sampleWords()) {
-        await _repo.registerDossier('local', d);
+        await _repo.registerMissingDossier('local', d);
       }
       final words = (await _repo.registeredQueries('local')).toList()..sort();
       final pending = await _repo.reviewableWordCount('local');
@@ -107,13 +121,14 @@ class _HomeState extends State<_Home> {
           _words = words;
           _pending = pending;
           _busy = false;
+          _loadError = null;
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _message = 'Local storage is unavailable. Please retry.';
+          _loadError = 'Local storage is unavailable. Please retry.';
         });
       }
     }
@@ -122,7 +137,7 @@ class _HomeState extends State<_Home> {
   Future<void> _import() async {
     setState(() {
       _busy = true;
-      _message = null;
+      _importMessage = null;
     });
     var imported = 0;
     try {
@@ -130,30 +145,26 @@ class _HomeState extends State<_Home> {
           label: 'WordAI dictionary',
           extensions: ['json'],
           uniformTypeIdentifiers: ['public.json']);
-      final file = await openFile(acceptedTypeGroups: [type]);
+      final file = await (widget.selectDictionary?.call() ??
+          openFile(acceptedTypeGroups: [type]));
       if (file == null) return;
-      if (await file.length() > 10 * 1024 * 1024) {
-        throw const FormatException('File exceeds 10 MB.');
+      imported = await importDictionary(file.openRead(),
+          repository: _repo,
+          uid: 'local',
+          onImported: (count) => imported = count);
+      if (mounted) {
+        setState(() => _importMessage =
+            'Imported $imported ${imported == 1 ? 'entry' : 'entries'}.');
       }
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! List || decoded.length > 20000) {
-        throw const FormatException('Expected up to 20,000 S6 entries.');
+    } on DictionaryImportException catch (error) {
+      if (mounted) {
+        setState(() =>
+            _importMessage = '${error.message} No entries were imported.');
       }
-      final entries = decoded.map((row) {
-        if (row is! Map<String, dynamic> || row['query'] is! String) {
-          throw const FormatException('Invalid dictionary entry.');
-        }
-        return WordAiDossier.fromJson(row, expectedQuery: row['query']);
-      }).toList();
-      for (final entry in entries) {
-        await _repo.registerDossier('local', entry);
-        imported++;
-      }
-      if (mounted) setState(() => _message = 'Imported $imported entries.');
     } catch (_) {
       if (mounted) {
-        setState(() => _message =
-            'Import stopped after $imported entries. Check the S6 format and available storage; existing progress is retained.');
+        setState(() => _importMessage =
+            'Import stopped after $imported ${imported == 1 ? 'entry' : 'entries'}. Check the file and available storage; existing progress is retained.');
       }
     } finally {
       await _load();
@@ -218,10 +229,13 @@ class _HomeState extends State<_Home> {
                                       tooltip: t('Retry', '重试'),
                                       icon: const Icon(Icons.refresh)),
                                 ]),
-                                if (_message != null)
+                                for (final message in [
+                                  _importMessage,
+                                  _loadError
+                                ].whereType<String>())
                                   Padding(
                                       padding: const EdgeInsets.only(top: 12),
-                                      child: Text(_message!)),
+                                      child: Text(message)),
                               ])),
                       if (_busy) const LinearProgressIndicator(),
                       Expanded(

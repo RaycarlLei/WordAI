@@ -382,7 +382,16 @@ class LearningRepository {
       };
 
   Future<int> registerDossier(String uid, WordAiDossier dossier,
-      {bool syncToCloud = true}) async {
+          {bool syncToCloud = true}) =>
+      _registerDossier(uid, dossier, updateExisting: true);
+
+  /// Seeds missing meanings without changing existing content or progress.
+  /// The existence check and insert share the same transaction.
+  Future<int> registerMissingDossier(String uid, WordAiDossier dossier) =>
+      _registerDossier(uid, dossier, updateExisting: false);
+
+  Future<int> _registerDossier(String uid, WordAiDossier dossier,
+      {required bool updateExisting}) async {
     if (uid.isEmpty || !dossier.isOk || dossier.senses.isEmpty) return 0;
     final db = await database;
     final direction = dossier.direction.wireValue;
@@ -437,6 +446,8 @@ class LearningRepository {
           changedTargetIds.add(targetId);
           continue;
         }
+
+        if (!updateExisting) continue;
 
         // A regenerated dossier repairs stale text in place. Learning state
         // and timestamps are intentionally absent from this update. Empty
