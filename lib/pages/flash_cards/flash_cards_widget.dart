@@ -10,6 +10,7 @@ import '/flutter_flow/flutter_flow_util.dart';
 import '/services/learning_repository.dart';
 import '/services/review_preparation.dart';
 import '/services/review_pronunciation.dart';
+import '/services/tts_service.dart';
 import '/widgets/review_loading_view.dart';
 
 class FlashCardsWidget extends StatefulWidget {
@@ -764,6 +765,31 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
                     : '${math.min(session.currentIndex + 1, session.targetIds.length)} / ${session.targetIds.length}',
                 onClose: _requestExit,
               ),
+              if (_pronunciation.playbackState case final playbackState?)
+                ValueListenableBuilder<TtsPlaybackSnapshot>(
+                  valueListenable: playbackState,
+                  builder: (context, state, child) =>
+                      state.phase == TtsPlaybackPhase.unavailable
+                          ? Padding(
+                              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                              child: Semantics(
+                                liveRegion: true,
+                                child: Text(
+                                  _t(
+                                    'Pronunciation is unavailable. You can keep reviewing. If sound continues, close the app. Reopen it to try audio again.',
+                                    '发音暂不可用，可继续复习。如仍有声音，请关闭应用；重新打开后可再试。',
+                                    '發音暫不可用，可繼續複習。如仍有聲音，請關閉應用程式；重新開啟後可再試。',
+                                  ),
+                                  key: const ValueKey('audio-unavailable'),
+                                  style: theme.bodySmall.copyWith(
+                                    color: theme.secondaryText,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                ),
               Expanded(
                 child: AnimatedSwitcher(
                   duration:

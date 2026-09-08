@@ -8,7 +8,7 @@ import 'community_gateway.dart';
 import 'speech_audio.dart';
 import 'speech_error_reporter.dart';
 
-enum TtsPlaybackPhase { idle, loading, playing }
+enum TtsPlaybackPhase { idle, loading, playing, unavailable }
 
 @immutable
 class TtsPlaybackSnapshot {
@@ -19,6 +19,9 @@ class TtsPlaybackSnapshot {
 
   const TtsPlaybackSnapshot.idle() : this._(phase: TtsPlaybackPhase.idle);
 
+  const TtsPlaybackSnapshot.unavailable()
+      : this._(phase: TtsPlaybackPhase.unavailable);
+
   const TtsPlaybackSnapshot.loading(String sourceId)
       : this._(phase: TtsPlaybackPhase.loading, sourceId: sourceId);
 
@@ -28,8 +31,7 @@ class TtsPlaybackSnapshot {
   final TtsPlaybackPhase phase;
   final String? sourceId;
 
-  bool isActiveFor(String id) =>
-      sourceId == id && phase != TtsPlaybackPhase.idle;
+  bool isActiveFor(String id) => isLoadingFor(id) || isPlayingFor(id);
   bool isLoadingFor(String id) =>
       sourceId == id && phase == TtsPlaybackPhase.loading;
   bool isPlayingFor(String id) =>
@@ -79,15 +81,38 @@ class TtsPlaybackArbiter {
     state.value = const TtsPlaybackSnapshot.idle();
   }
 
+  void makeUnavailable() {
+    ++_generation;
+    state.value = const TtsPlaybackSnapshot.unavailable();
+  }
+
   void dispose() => state.dispose();
 }
 
-/// Text-to-Speech Service.
-/// Live speech is generated only through authenticated WordAI Cloud.
+/// Native ownership survives a UI completion notification. In particular,
+/// flutter_tts does not identify the utterance in completion/cancel callbacks.
+class _PlaybackOwner {
+  _PlaybackOwner(this.token, this.sourceId,
+      {this.player, this.path, this.text});
+
+  final int token;
+  final String sourceId;
+  final AudioPlayer? player;
+  final String? path;
+  final String? text;
+  final List<StreamSubscription<dynamic>> subscriptions = [];
+  bool acceptsEvents = true;
+  bool started = false;
+  bool nativeError = false;
+  bool recovering = false;
+  int pendingCalls = 0;
+}
+
+/// Coordinates cached/gateway audio and local device speech fallback.
 class TTSService {
   static final TTSService instance = TTSService._internal();
 
-  TTSService._internal() : this._(AudioPlayer(), FlutterTts(), null);
+  TTSService._internal() : this._(AudioPlayer.new, FlutterTts(), null);
 
   @visibleForTesting
   TTSService.forTesting({
@@ -95,78 +120,69 @@ class TTSService {
     TTSCacheManager? cacheManager,
     Future<List<int>> Function(String)? cloudSpeechLoader,
     Future<List<int>?> Function(String)? offlineSpeechLoader,
-    AudioPlayer? audioPlayer,
+    AudioPlayer Function()? audioPlayerFactory,
     FlutterTts? systemTts,
-  }) : this._(audioPlayer ?? AudioPlayer(), systemTts ?? FlutterTts(),
+    Duration nativeCallTimeout = const Duration(seconds: 8),
+  }) : this._(audioPlayerFactory ?? AudioPlayer.new, systemTts ?? FlutterTts(),
             audioLoader,
             cacheManager: cacheManager,
             cloudSpeechLoader: cloudSpeechLoader,
-            offlineSpeechLoader: offlineSpeechLoader);
+            offlineSpeechLoader: offlineSpeechLoader,
+            nativeCallTimeout: nativeCallTimeout);
 
   TTSService._(
-    this._audioPlayer,
+    this._audioPlayerFactory,
     this._systemTts,
     this._audioLoader, {
     TTSCacheManager? cacheManager,
     Future<List<int>> Function(String)? cloudSpeechLoader,
     Future<List<int>?> Function(String)? offlineSpeechLoader,
+    Duration nativeCallTimeout = const Duration(seconds: 8),
   })  : _cacheManager = cacheManager,
         _cloudSpeechLoader = cloudSpeechLoader,
-        _offlineSpeechLoader = offlineSpeechLoader {
+        _offlineSpeechLoader = offlineSpeechLoader,
+        _nativeCallTimeout = nativeCallTimeout {
+    if (nativeCallTimeout <= Duration.zero) {
+      throw ArgumentError.value(nativeCallTimeout, 'nativeCallTimeout');
+    }
     // The plugin's default logger includes source URLs/data URIs in errors.
     // Our listeners below report only sanitized stage/code metadata instead.
     AudioLogger.logLevel = AudioLogLevel.none;
-    _playerCompleteSubscription = _audioPlayer.onPlayerComplete.listen((_) {
-      if (_playbackArbiter.state.value.phase == TtsPlaybackPhase.playing) {
-        _currentPlayingUrl = null;
-        _playbackArbiter.complete();
-      }
-    }, onError: (Object error, StackTrace stack) {
-      reportSpeechFailure('playback', 'speech-native-player-error');
-      if (_playbackArbiter.state.value.phase == TtsPlaybackPhase.playing) {
-        unawaited(_recoverNativePlayback());
-      }
-    });
-    _systemTts.setCompletionHandler(() {
-      if (_currentPlayingUrl == _systemSpeechMarker &&
-          _playbackArbiter.state.value.phase == TtsPlaybackPhase.playing) {
-        _currentPlayingUrl = null;
-        _playbackArbiter.complete();
-      }
-    });
-    _systemTts.setCancelHandler(() {
-      if (_currentPlayingUrl == _systemSpeechMarker) {
-        _currentPlayingUrl = null;
-        _playbackArbiter.complete();
-      }
-    });
+    _systemTts.setCompletionHandler(_systemFinished);
+    _systemTts.setCancelHandler(_systemFinished);
     _systemTts.setErrorHandler((_) {
-      if (_currentPlayingUrl == _systemSpeechMarker) {
+      final owner = _owner;
+      if (owner != null && owner.player == null && _acceptsEvents(owner)) {
         reportSpeechFailure('system', 'speech-system-player-error');
-        _currentPlayingUrl = null;
-        _playbackArbiter.stop();
+        _systemFinished();
       }
     });
   }
 
-  final AudioPlayer _audioPlayer;
+  final AudioPlayer Function() _audioPlayerFactory;
   final FlutterTts _systemTts;
   final Future<String> Function(String)? _audioLoader;
   final TTSCacheManager? _cacheManager;
   final Future<List<int>> Function(String)? _cloudSpeechLoader;
   final Future<List<int>?> Function(String)? _offlineSpeechLoader;
-  String? _activeSpeechText;
-  int? _activeToken;
-  bool _recoveringNative = false;
-  late final StreamSubscription<void> _playerCompleteSubscription;
+  final Duration _nativeCallTimeout;
   final TtsPlaybackArbiter _playbackArbiter = TtsPlaybackArbiter();
-  String? _currentPlayingUrl;
+  final StreamController<PlayerState> _playerStates =
+      StreamController<PlayerState>.broadcast();
+  _PlaybackOwner? _owner;
+  bool _unavailable = false;
+  bool _disposed = false;
+  bool _notifierDisposed = false;
+  Future<void>? _disposeOperation;
   int _sourceSequence = 0;
   Future<void> _audioOperation = Future<void>.value();
-  static const String _systemSpeechMarker = 'wordai-system-speech';
 
   ValueNotifier<TtsPlaybackSnapshot> get playbackState =>
       _playbackArbiter.state;
+
+  /// False after ambiguous native failure or disposal. Recreating FlutterTts
+  /// cannot recover this safely: that plugin shares one native engine.
+  bool get isAudioAvailable => !_unavailable && !_disposed;
 
   /// Normalize text for consistent hashing and API results
   String _normalizeText(String text) {
@@ -292,25 +308,23 @@ class TTSService {
   /// previous playback. The returned token prevents stale network requests
   /// from starting after a newer button has been tapped.
   Future<int> beginPlayback(String sourceId) async {
+    _requireAvailable();
     final token = _playbackArbiter.claim(sourceId);
-    _activeSpeechText = null;
-    _activeToken = null;
     await _serializeAudioOperation(() async {
-      await _stopPlayers();
-      _currentPlayingUrl = null;
+      _requireAvailable();
+      await _retireCurrentOwner();
     });
     return token;
   }
 
   bool isPlaybackRequestCurrent(int token, String sourceId) =>
-      _playbackArbiter.isCurrent(token, sourceId);
+      isAudioAvailable && _playbackArbiter.isCurrent(token, sourceId);
 
   bool isPlaybackGenerationCurrent(int token) =>
-      _playbackArbiter.isGenerationCurrent(token);
+      isAudioAvailable && _playbackArbiter.isGenerationCurrent(token);
 
   void abandonPlaybackRequest(int token, String sourceId) {
     if (!isPlaybackRequestCurrent(token, sourceId)) return;
-    _currentPlayingUrl = null;
     _playbackArbiter.abandon(token, sourceId);
   }
 
@@ -330,7 +344,8 @@ class TTSService {
         fallbackText: text,
       );
     } catch (error) {
-      if (!_playbackArbiter.isGenerationCurrent(token)) return false;
+      if (!isAudioAvailable) _requireAvailable();
+      if (!isPlaybackGenerationCurrent(token)) return false;
       _reportGenerationFailure(error);
       if (shouldUseSystemSpeech(error)) {
         return playSystemSpeech(
@@ -347,7 +362,9 @@ class TTSService {
   bool shouldUseSystemSpeech(Object error) {
     if (kIsWeb) return false;
     if (error is SpeechAudioException &&
-        error.code.startsWith('speech-system-')) {
+        (error.code.startsWith('speech-system-') ||
+            error.code == 'speech-audio-unavailable' ||
+            error.code == 'speech-audio-disposed')) {
       return false;
     }
     // System speech is local and free. Input mistakes/cancellation still stop.
@@ -376,30 +393,68 @@ class TTSService {
     }
   }
 
-  Future<void> _recoverNativePlayback() async {
-    if (_recoveringNative || _currentPlayingUrl == _systemSpeechMarker) return;
-    final text = _activeSpeechText;
-    final token = _activeToken;
-    final source = _playbackArbiter.state.value.sourceId;
-    final path = _currentPlayingUrl;
-    if (text == null || token == null || source == null) {
-      _playbackArbiter.stop();
-      return;
-    }
-    _recoveringNative = true;
+  bool _acceptsEvents(_PlaybackOwner owner) =>
+      isAudioAvailable &&
+      identical(_owner, owner) &&
+      owner.acceptsEvents &&
+      _playbackArbiter.isGenerationCurrent(owner.token);
+
+  void _systemFinished() {
+    final owner = _owner;
+    if (owner == null || owner.player != null || !_acceptsEvents(owner)) return;
+    // flutter_tts events have no utterance ID. They can update the indicator,
+    // but cannot release ownership or prove that this utterance has stopped.
+    _playbackArbiter.complete();
+  }
+
+  void _listenToPlayer(_PlaybackOwner owner) {
+    final player = owner.player!;
+    owner.subscriptions.add(player.onPlayerComplete.listen((_) {
+      if (_acceptsEvents(owner)) _playbackArbiter.complete();
+    }, onError: (Object _, StackTrace __) {
+      if (!_acceptsEvents(owner) || owner.recovering) return;
+      owner.nativeError = true;
+      // Preparation/resume failures are handled by their awaited request.
+      // Only an already accepted playback needs asynchronous recovery.
+      if (!owner.started) return;
+      owner.recovering = true;
+      owner.acceptsEvents = false;
+      reportSpeechFailure('playback', 'speech-native-player-error');
+      unawaited(_recoverNativePlayback(owner));
+    }));
+    owner.subscriptions.add(player.onPlayerStateChanged.listen((state) {
+      if (_acceptsEvents(owner)) _playerStates.add(state);
+    }));
+  }
+
+  Future<void> _recoverNativePlayback(_PlaybackOwner owner) async {
     try {
-      if (path != null) await _evictFailedAudio(path);
-      await playSystemSpeech(text, sourceId: source, requestToken: token);
+      final retired = await _serializeAudioOperation(() async {
+        if (!identical(_owner, owner)) return false;
+        _requireAvailable();
+        await _retireCurrentOwner();
+        return true;
+      });
+      if (!retired) return;
+      if (owner.path != null) unawaited(_evictFailedAudio(owner.path!));
+      if (!isPlaybackRequestCurrent(owner.token, owner.sourceId)) return;
+      if (owner.text != null) {
+        await playSystemSpeech(owner.text!,
+            sourceId: owner.sourceId, requestToken: owner.token);
+      } else {
+        abandonPlaybackRequest(owner.token, owner.sourceId);
+      }
     } catch (_) {
-      reportSpeechFailure('system', 'speech-system-player-error');
-    } finally {
-      _recoveringNative = false;
+      // A failed/timed-out stop leaves audio unavailable. Never fall back
+      // while the previous source could still be audible.
+      reportSpeechFailure('playback', 'speech-native-recovery-failed');
     }
   }
 
   Future<void> _evictFailedAudio(String path) async {
     try {
-      await TTSCacheManager.instance.evictPlaybackSource(path);
+      await (_cacheManager ?? TTSCacheManager.instance)
+          .evictPlaybackSource(path);
     } catch (_) {
       reportSpeechFailure('cache', 'speech-cache-remove-failed');
     }
@@ -410,38 +465,54 @@ class TTSService {
     required String sourceId,
     required int requestToken,
   }) async {
+    _requireAvailable();
     if (!isPlaybackRequestCurrent(requestToken, sourceId)) return false;
     final normalized = _normalizeText(text);
     if (normalized.isEmpty) return false;
     try {
-      await _serializeAudioOperation(() async {
-        await _stopPlayers();
-        if (!isPlaybackRequestCurrent(requestToken, sourceId)) return;
+      return await _serializeAudioOperation(() async {
+        _requireAvailable();
+        if (!isPlaybackRequestCurrent(requestToken, sourceId)) return false;
+        await _retireCurrentOwner();
+        if (!isPlaybackRequestCurrent(requestToken, sourceId)) return false;
+        final owner = _PlaybackOwner(requestToken, sourceId);
+        _owner = owner;
         final hanCount =
             RegExp(r'[\u3400-\u9fff]').allMatches(normalized).length;
-        await _systemTts.setLanguage(
-          hanCount * 2 >= normalized.runes.length ? 'zh-CN' : 'en-US',
-        );
-        await _systemTts.setSpeechRate(0.48);
-        await _systemTts.setPitch(1.0);
-        await _systemTts.setVolume(1.0);
-        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-          await _systemTts.setIosAudioCategory(
-            IosTextToSpeechAudioCategory.playback,
-            <IosTextToSpeechAudioCategoryOptions>[],
-            IosTextToSpeechAudioMode.defaultMode,
-          );
-          await _systemTts.setSharedInstance(true);
+        final configuration = <Future<dynamic> Function()>[
+          () => _systemTts.setLanguage(
+              hanCount * 2 >= normalized.runes.length ? 'zh-CN' : 'en-US'),
+          () => _systemTts.setSpeechRate(0.48),
+          () => _systemTts.setPitch(1.0),
+          () => _systemTts.setVolume(1.0),
+          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) ...[
+            () => _systemTts.setIosAudioCategory(
+                  IosTextToSpeechAudioCategory.playback,
+                  <IosTextToSpeechAudioCategoryOptions>[],
+                  IosTextToSpeechAudioMode.defaultMode,
+                ),
+            () => _systemTts.setSharedInstance(true),
+          ],
+        ];
+        for (final configure in configuration) {
+          await _nativeCall(owner, configure);
+          if (!isPlaybackRequestCurrent(requestToken, sourceId)) return false;
         }
-        _currentPlayingUrl = _systemSpeechMarker;
-        if (!_playbackArbiter.markPlaying(requestToken, sourceId)) return;
-        final started = await _systemTts.speak(normalized);
+        owner.started = true;
+        _playbackArbiter.markPlaying(requestToken, sourceId);
+        final started =
+            await _nativeCall(owner, () => _systemTts.speak(normalized));
         if (started != 1) {
           throw const SpeechAudioException('speech-system-unavailable');
         }
+        return isPlaybackGenerationCurrent(requestToken);
       });
-      return isPlaybackRequestCurrent(requestToken, sourceId);
     } catch (error) {
+      if (!isAudioAvailable) _requireAvailable();
+      // A rejected call is not evidence that nothing started. Confirm stop
+      // before freeing this owner, including failed system speak requests.
+      await _stopFailedRequest(requestToken);
+      if (!isPlaybackGenerationCurrent(requestToken)) return false;
       abandonPlaybackRequest(requestToken, sourceId);
       reportSpeechFailure('system', 'speech-system-player-error');
       throw const SpeechAudioException('speech-system-player-error');
@@ -456,6 +527,7 @@ class TTSService {
     int? requestToken,
     String? fallbackText,
   }) async {
+    _requireAvailable();
     final resolvedSourceId =
         sourceId ?? createPlaybackSourceId('direct-playback');
     final resolvedToken = requestToken ?? await beginPlayback(resolvedSourceId);
@@ -466,46 +538,61 @@ class TTSService {
 
     try {
       return await _serializeAudioOperation(() async {
+        _requireAvailable();
         if (!isPlaybackRequestCurrent(resolvedToken, resolvedSourceId)) {
           return false;
         }
 
-        await _stopPlayers();
+        await _retireCurrentOwner();
         if (!isPlaybackRequestCurrent(resolvedToken, resolvedSourceId)) {
           return false;
         }
 
-        _currentPlayingUrl = audioPath;
-        _activeSpeechText = fallbackText;
-        _activeToken = resolvedToken;
-        await _audioPlayer.setAudioContext(AudioContext(
-          iOS: AudioContextIOS(category: AVAudioSessionCategory.playback),
-        ));
-        await _audioPlayer.setVolume(1.0);
-
-        await _audioPlayer
-            .setSource(
-                kIsWeb ? UrlSource(audioPath) : DeviceFileSource(audioPath))
-            .timeout(const Duration(seconds: 8));
-        if (!isPlaybackRequestCurrent(resolvedToken, resolvedSourceId)) {
-          return false;
+        // A fresh player gives native events an instance boundary. Reusing
+        // one player cannot distinguish late completion of its old source.
+        final player = _audioPlayerFactory();
+        // Speech has no position/progress UI. The plugin's default updater
+        // starts unobserved native position Futures on resume/completion;
+        // disable it before this fresh player can issue any playback call.
+        player.positionUpdater = null;
+        final owner = _PlaybackOwner(resolvedToken, resolvedSourceId,
+            player: player, path: audioPath, text: fallbackText);
+        _owner = owner;
+        _listenToPlayer(owner);
+        final preparation = <Future<void> Function()>[
+          () => player.setAudioContext(AudioContext(
+                iOS: AudioContextIOS(category: AVAudioSessionCategory.playback),
+              )),
+          () => player.setVolume(1.0),
+          () => player.setSource(
+              kIsWeb ? UrlSource(audioPath) : DeviceFileSource(audioPath)),
+          if (_currentPlaybackRate != 1.0)
+            () => player.setPlaybackRate(_currentPlaybackRate),
+        ];
+        for (final prepare in preparation) {
+          await _nativeCall(owner, prepare);
+          if (owner.nativeError) {
+            throw const SpeechAudioException('speech-native-player-error');
+          }
+          if (!isPlaybackRequestCurrent(resolvedToken, resolvedSourceId)) {
+            return false;
+          }
         }
-        await _audioPlayer.resume();
-        if (!_playbackArbiter.markPlaying(resolvedToken, resolvedSourceId)) {
-          await _audioPlayer.stop();
-          return false;
+        _playbackArbiter.markPlaying(resolvedToken, resolvedSourceId);
+        await _nativeCall(owner, player.resume);
+        if (owner.nativeError) {
+          throw const SpeechAudioException('speech-native-player-error');
         }
-
-        if (_currentPlaybackRate != 1.0 &&
-            isPlaybackRequestCurrent(resolvedToken, resolvedSourceId)) {
-          await _audioPlayer.setPlaybackRate(_currentPlaybackRate);
-        }
-        return isPlaybackRequestCurrent(resolvedToken, resolvedSourceId);
+        owner.started = true;
+        return isPlaybackGenerationCurrent(resolvedToken);
       });
     } catch (e) {
-      if (!_playbackArbiter.isGenerationCurrent(resolvedToken)) return false;
+      if (!isAudioAvailable) _requireAvailable();
+      await _stopFailedRequest(resolvedToken);
+      if (!isPlaybackGenerationCurrent(resolvedToken)) return false;
       reportSpeechFailure('playback', 'speech-native-player-error');
-      await _evictFailedAudio(audioPath);
+      // Cache IO is not part of the native operation queue.
+      unawaited(_evictFailedAudio(audioPath));
       if (fallbackText != null &&
           shouldUseSystemSpeech(e) &&
           isPlaybackRequestCurrent(resolvedToken, resolvedSourceId)) {
@@ -519,47 +606,156 @@ class TTSService {
 
   /// Cancel only this owner's playback, including a pending download.
   Future<void> stopSource(String sourceId) async {
-    if (_playbackArbiter.state.value.sourceId != sourceId) return;
-    await stop();
+    if (_disposed) return;
+    _requireAvailable();
+    final owner = _owner;
+    final ownsNative = owner != null && owner.sourceId == sourceId;
+    final ownsRequest = _playbackArbiter.state.value.sourceId == sourceId;
+    if (!ownsNative && !ownsRequest) return;
+    if (ownsRequest ||
+        (ownsNative && _playbackArbiter.isGenerationCurrent(owner.token))) {
+      _playbackArbiter.stop();
+    }
+    if (ownsNative) owner.acceptsEvents = false;
+    await _serializeAudioOperation(() async {
+      if (_unavailable) _requireAvailable();
+      if (ownsNative && identical(_owner, owner)) await _retireCurrentOwner();
+    });
   }
 
   /// Stop current playback
   Future<void> stop() async {
+    if (_disposed) return;
+    _requireAvailable();
     _playbackArbiter.stop();
-    _currentPlayingUrl = null;
+    _owner?.acceptsEvents = false;
     _currentPlaybackRate = 1.0;
-    try {
-      await _serializeAudioOperation(_stopPlayers);
-    } catch (e) {
-      // Ignore errors when stopping
-    }
+    await _serializeAudioOperation(() async {
+      if (_unavailable) _requireAvailable();
+      await _retireCurrentOwner();
+    });
   }
 
   Future<T> _serializeAudioOperation<T>(Future<T> Function() operation) {
-    final completer = Completer<T>();
-    _audioOperation = _audioOperation.catchError((_) {}).then((_) async {
-      try {
-        completer.complete(await operation());
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
-    });
-    return completer.future;
+    final result = _audioOperation.then((_) => operation());
+    _audioOperation =
+        result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
   }
 
-  Future<void> _stopPlayers() async {
-    // A broken cloud-audio player must not prevent local system recovery.
+  void _requireAvailable() {
+    if (_disposed) throw const SpeechAudioException('speech-audio-disposed');
+    if (_unavailable) {
+      throw const SpeechAudioException('speech-audio-unavailable');
+    }
+  }
+
+  void _quarantine() {
+    if (_unavailable) return;
+    _unavailable = true;
+    _owner?.acceptsEvents = false;
+    if (!_notifierDisposed) _playbackArbiter.makeUnavailable();
+    reportSpeechFailure('playback', 'speech-audio-unavailable');
+    final owner = _owner;
+    if (owner != null) unawaited(_attemptQuarantinedStop(owner));
+  }
+
+  /// Bounds the Dart wait, not the native operation. Late completion/error is
+  /// observed and can only request another stop of this captured owner.
+  Future<T> _nativeCall<T>(
+    _PlaybackOwner owner,
+    Future<T> Function() operation, {
+    bool stopping = false,
+  }) async {
+    var expired = false;
+    owner.pendingCalls++;
+    final pending = Future<T>.sync(operation);
+    void settled() {
+      owner.pendingCalls--;
+      if (expired) unawaited(_attemptQuarantinedStop(owner));
+    }
+
+    unawaited(pending.then<void>((_) => settled(),
+        onError: (Object _, StackTrace __) {
+      settled();
+    }));
     try {
-      await _audioPlayer.stop();
+      return await pending.timeout(_nativeCallTimeout, onTimeout: () {
+        expired = true;
+        _quarantine();
+        throw const SpeechAudioException('speech-audio-unavailable');
+      });
+    } catch (_) {
+      if (stopping) _quarantine();
+      rethrow;
+    }
+  }
+
+  Future<void> _stopNative(_PlaybackOwner owner) async {
+    if (owner.player case final player?) {
+      await player.stop();
+    } else {
+      final result = await _systemTts.stop();
+      if (result != 1) {
+        throw const SpeechAudioException('speech-system-stop-failed');
+      }
+    }
+  }
+
+  Future<void> _attemptQuarantinedStop(_PlaybackOwner owner) async {
+    if (owner.player?.state == PlayerState.disposed) return;
+    // This is best-effort cleanup only. Even a late stop acknowledgement does
+    // not re-enable audio after an ambiguous native operation. Each late
+    // operation gets its own attempt: an earlier late stop may settle before
+    // a later resume that was already in flight when disposal began.
+    owner.pendingCalls++;
+    final pending = Future<void>.sync(() => _stopNative(owner));
+    // Observe this cleanup call too, but do not recursively retry a late
+    // cleanup stop. Only the original operation may have started new sound.
+    unawaited(pending.then<void>((_) {
+      owner.pendingCalls--;
+    }, onError: (Object _, StackTrace __) {
+      owner.pendingCalls--;
+    }));
+    try {
+      await pending.timeout(_nativeCallTimeout);
     } catch (_) {
       reportSpeechFailure('playback', 'speech-native-stop-failed');
     }
-    try {
-      await _systemTts.stop();
-    } catch (_) {
-      reportSpeechFailure('system', 'speech-system-stop-failed');
-    }
   }
+
+  Future<void> _cancelSubscriptions(_PlaybackOwner owner) async {
+    final subscriptions = List.of(owner.subscriptions);
+    owner.subscriptions.clear();
+    await Future.wait(
+            subscriptions.map((subscription) => subscription.cancel()))
+        .timeout(_nativeCallTimeout);
+  }
+
+  Future<void> _retireCurrentOwner() async {
+    final owner = _owner;
+    if (owner == null) return;
+    owner.acceptsEvents = false;
+    await _nativeCall(owner, () => _stopNative(owner), stopping: true);
+    // dispose() itself calls stop/release in audioplayers. It is not a kill
+    // switch for an earlier source/resume Future that is still outstanding.
+    if (owner.pendingCalls != 0) return;
+    try {
+      await _cancelSubscriptions(owner);
+    } catch (_) {
+      _quarantine();
+      rethrow;
+    }
+    if (owner.player case final player?) {
+      await _nativeCall(owner, player.dispose, stopping: true);
+    }
+    if (identical(_owner, owner)) _owner = null;
+  }
+
+  Future<void> _stopFailedRequest(int token) =>
+      _serializeAudioOperation(() async {
+        if (_owner?.token == token) await _retireCurrentOwner();
+      });
 
   double _currentPlaybackRate = 1.0;
 
@@ -567,14 +763,19 @@ class TTSService {
   /// Can be called during playback to adjust speed in real-time
   /// Rate: 0.25 to 4.0 (1.0 = normal speed)
   Future<void> setPlaybackRate(double rate) async {
-    try {
-      if (_currentPlayingUrl != null) {
-        await _audioPlayer.setPlaybackRate(rate);
-        _currentPlaybackRate = rate;
-      }
-    } catch (e) {
-      debugPrint('Error setting playback rate: $e');
+    _requireAvailable();
+    if (!rate.isFinite || rate < 0.25 || rate > 4.0) {
+      throw ArgumentError.value(rate, 'rate', 'Must be between 0.25 and 4.0');
     }
+    final owner = _owner;
+    await _serializeAudioOperation(() async {
+      _requireAvailable();
+      if (owner == null || owner.player == null || !_acceptsEvents(owner)) {
+        return;
+      }
+      await _nativeCall(owner, () => owner.player!.setPlaybackRate(rate));
+      if (_acceptsEvents(owner)) _currentPlaybackRate = rate;
+    });
   }
 
   /// Get current playback rate
@@ -587,14 +788,38 @@ class TTSService {
       _playbackArbiter.state.value.phase == TtsPlaybackPhase.playing;
 
   /// Get audio player state stream
-  Stream<dynamic> get playerStateStream => _audioPlayer.onPlayerStateChanged;
+  Stream<PlayerState> get playerStateStream => _playerStates.stream;
 
   /// Dispose resources
-  Future<void> dispose() async {
-    await stop();
-    await _playerCompleteSubscription.cancel();
-    await _audioPlayer.dispose();
-    _playbackArbiter.dispose();
+  Future<void> dispose() {
+    if (_disposeOperation != null) return _disposeOperation!;
+    _disposed = true;
+    if (!_unavailable) _playbackArbiter.stop();
+    _owner?.acceptsEvents = false;
+    _systemTts.setCompletionHandler(() {});
+    _systemTts.setCancelHandler(() {});
+    _systemTts.setErrorHandler((_) {});
+    return _disposeOperation = _serializeAudioOperation(() async {
+      try {
+        await _retireCurrentOwner();
+      } catch (_) {
+        _quarantine();
+      } finally {
+        final owner = _owner;
+        if (owner != null) {
+          try {
+            await _cancelSubscriptions(owner);
+          } catch (_) {
+            _quarantine();
+          }
+        }
+        // Closing a broadcast stream can wait for a paused consumer. It must
+        // not hold native cleanup or logical service disposal hostage.
+        unawaited(_playerStates.close());
+        _notifierDisposed = true;
+        _playbackArbiter.dispose();
+      }
+    });
   }
 
   /// Clear all cached audio
