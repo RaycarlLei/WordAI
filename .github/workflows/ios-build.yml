@@ -1,7 +1,7 @@
 name: iOS simulator build
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
 permissions:
   contents: read
