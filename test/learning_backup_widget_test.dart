@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'fixtures/offline_http.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -99,6 +101,18 @@ Future<void> _dialog(
 }
 
 void main() {
+  late OfflineHttp offline;
+  HttpOverrides? previousNetwork;
+  setUp(() {
+    previousNetwork = HttpOverrides.current;
+    offline = OfflineHttp();
+    HttpOverrides.global = offline;
+  });
+  tearDown(() {
+    HttpOverrides.global = previousNetwork;
+    expect(offline.attempts, 0,
+        reason: 'Local import and backup must not contact a service');
+  });
   sqfliteFfiInit();
 
   testWidgets(

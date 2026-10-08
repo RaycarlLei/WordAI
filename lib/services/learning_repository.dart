@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '/services/learning_distractor_source.dart';
 import '/services/wordai_dossier.dart';
+import 'word_book_schema.dart';
 
 enum LearningStage { unlearned, contextPassed, learned }
 
@@ -205,21 +206,7 @@ class LearningRepository {
   static final instance = LearningRepository._();
   static const _uuid = Uuid();
   static const _databaseName = 'wordai_learning.db';
-  static const _databaseVersion = 4;
-  static const _sessionStateFields = <String>[
-    'started_at',
-    'ended_at',
-    'active_ms',
-    'target_count',
-    'completed_count',
-    'context_passed_count',
-    'new_learned_count',
-    'current_index',
-    'target_ids_json',
-    'status',
-    'exit_reason',
-    'updated_at',
-  ];
+  static const _databaseVersion = 5;
   Database? _database;
   Future<Database>? _openingDatabase;
   Database? _databaseOverride;
@@ -330,6 +317,8 @@ class LearningRepository {
     ''');
     await _createReviewQuestionsTable(db);
     await _createSyncStateTable(db);
+    await createWordBookSchema(db);
+    await initializeWordBooks(db);
   }
 
   @visibleForTesting
@@ -338,6 +327,10 @@ class LearningRepository {
     int oldVersion,
     int newVersion,
   ) async {
+    if (oldVersion < 5 && newVersion >= 5) {
+      await createWordBookSchema(db);
+      await initializeWordBooks(db);
+    }
     if (oldVersion < 2) await _createSyncStateTable(db);
     if (oldVersion < 3) {
       await _createReviewQuestionsTable(db);
@@ -414,18 +407,7 @@ class LearningRepository {
   ) =>
       _hash('$uid::$lexemeId::$senseId');
 
-  @visibleForTesting
-  static Map<String, Object?> progressCloudIdentity(
-    String uid,
-    String targetId,
-  ) =>
-      <String, Object?>{
-        'uid': uid,
-        'target_id': targetId,
-      };
-
-  Future<int> registerDossier(String uid, WordAiDossier dossier,
-          {bool syncToCloud = true}) =>
+  Future<int> registerDossier(String uid, WordAiDossier dossier) =>
       _registerDossier(uid, dossier, updateExisting: true);
 
   /// Seeds missing meanings without changing existing content or progress.
@@ -475,6 +457,13 @@ class LearningRepository {
     final incomingWord = dossier.headword.english.trim();
     final word = incomingWord.isNotEmpty ? incomingWord : normalizedQuery;
     final now = DateTime.now().millisecondsSinceEpoch;
+    final firstLocalQuery = uid == 'local' &&
+        (await txn.query('learning_progress',
+                columns: ['target_id'],
+                where: 'uid = ? AND LOWER(TRIM(query)) = ?',
+                whereArgs: [uid, normalizedQuery.toLowerCase()],
+                limit: 1))
+            .isEmpty;
     var changed = 0;
     for (final sense in dossier.senses) {
       final example = sense.examples.isEmpty ? null : sense.examples.first;
@@ -545,6 +534,17 @@ class LearningRepository {
         whereArgs: [targetId, uid],
       );
       changed++;
+    }
+    if (firstLocalQuery && changed > 0) {
+      await txn.insert(
+          'word_book_members',
+          {
+            'id': 'default:${normalizedQuery.toLowerCase()}',
+            'uid': 'local',
+            'book_id': 'default',
+            'query': normalizedQuery.toLowerCase()
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     return changed;
   }
@@ -622,7 +622,7 @@ class LearningRepository {
           row['session_id'] as String,
           'invalid_session',
         );
-        _reportSyncError('learning.invalidSession',
+        _reportLocalError('learning.invalidSession',
             const FormatException('Invalid saved review session'), stack);
         continue;
       }
@@ -933,7 +933,7 @@ class LearningRepository {
         limit: 80,
       );
     } catch (error, stack) {
-      _reportSyncError('learning.loadDistractors', error, stack);
+      _reportLocalError('learning.loadDistractors', error, stack);
       return const <ReviewMeaningCandidate>[];
     }
   }
@@ -1308,6 +1308,9 @@ class LearningRepository {
         where: 'uid = ? AND lexeme_id = ?',
         whereArgs: [uid, progressRows.first['lexeme_id']],
       );
+      if (uid == 'local' && correct && next == LearningStage.learned) {
+        await reconcileLearnedBooks(txn);
+      }
       total = senseRows.length;
       final threshold = min(previous.value + 1, LearningStage.learned.value);
       passed = senseRows
@@ -1438,173 +1441,7 @@ class LearningRepository {
     return (rows.first['count'] as num?)?.toInt() ?? 0;
   }
 
-  Future<void> syncFromCloud(String uid) async {}
-  void _reportSyncError(String operation, Object error, StackTrace stack) {
+  void _reportLocalError(String operation, Object error, StackTrace stack) {
     debugPrint('$operation: ${error.runtimeType}');
   }
-
-  @visibleForTesting
-  static Map<String, Object?> mergeProgressState(
-    Map<String, Object?> local,
-    Map<String, dynamic> remote,
-  ) {
-    int integer(Object? value) => value is num
-        ? value.toInt()
-        : int.tryParse(value?.toString() ?? '') ?? 0;
-    int? latestTime(String key) {
-      final localValue = _firestoreMillis(local[key]);
-      final remoteValue = _firestoreMillis(remote[key]);
-      if (localValue == null) return remoteValue;
-      if (remoteValue == null) return localValue;
-      return max(localValue, remoteValue);
-    }
-
-    final stage = max(
-      LearningStageValue.fromInt(local['stage']).value,
-      LearningStageValue.fromInt(remote['stage']).value,
-    );
-    final learnedOnce = stage == LearningStage.learned.value ||
-        local['learned_once'] == 1 ||
-        local['learned_once'] == true ||
-        remote['learned_once'] == 1 ||
-        remote['learned_once'] == true;
-    return <String, Object?>{
-      'stage': stage,
-      'learned_once': learnedOnce ? 1 : 0,
-      'attempt_count': max(
-          integer(local['attempt_count']), integer(remote['attempt_count'])),
-      'context_passed_at': latestTime('context_passed_at'),
-      'learned_at': latestTime('learned_at'),
-      'last_tested_at': latestTime('last_tested_at'),
-      'updated_at': max(
-        _firestoreMillis(local['updated_at']) ?? 0,
-        _firestoreMillis(remote['updated_at']) ?? 0,
-      ),
-    };
-  }
-
-  @visibleForTesting
-  static Map<String, Object?> mergeSessionState(
-    Map<String, Object?> local,
-    Map<String, Object?> remote,
-  ) {
-    int integer(Object? value) => value is num
-        ? value.toInt()
-        : int.tryParse(value?.toString() ?? '') ?? 0;
-    int? latestTime(String key) {
-      final localValue = _firestoreMillis(local[key]);
-      final remoteValue = _firestoreMillis(remote[key]);
-      if (localValue == null) return remoteValue;
-      if (remoteValue == null) return localValue;
-      return max(localValue, remoteValue);
-    }
-
-    int earliestStart() {
-      final localValue = _firestoreMillis(local['started_at']) ?? 0;
-      final remoteValue = _firestoreMillis(remote['started_at']) ?? 0;
-      if (localValue == 0) return remoteValue;
-      if (remoteValue == 0) return localValue;
-      return min(localValue, remoteValue);
-    }
-
-    String status(Object? value, String fallback) =>
-        const {'active', 'exited', 'completed'}.contains(value)
-            ? value! as String
-            : value == null
-                ? fallback
-                : 'exited';
-    const statusRank = {'active': 0, 'exited': 1, 'completed': 2};
-    final localStatus = status(local['status'], 'active');
-    final remoteStatus = status(remote['status'], localStatus);
-    final remoteWins =
-        (statusRank[remoteStatus] ?? 0) > (statusRank[localStatus] ?? 0) ||
-            (remoteStatus == localStatus &&
-                (_firestoreMillis(remote['updated_at']) ?? 0) >
-                    (_firestoreMillis(local['updated_at']) ?? 0));
-    final mergedStatus = remoteWins ? remoteStatus : localStatus;
-    final localTargets = (local['target_ids_json'] ?? '').toString().trim();
-    final remoteTargets = (remote['target_ids_json'] ?? '').toString().trim();
-
-    return <String, Object?>{
-      'started_at': earliestStart(),
-      'ended_at': latestTime('ended_at'),
-      for (final key in const [
-        'active_ms',
-        'target_count',
-        'completed_count',
-        'context_passed_count',
-        'new_learned_count',
-        'current_index',
-      ])
-        key: max(integer(local[key]), integer(remote[key])),
-      // A session's selected targets are immutable. Prefer the local copy so
-      // a stale or malformed cloud payload cannot replace the active round.
-      'target_ids_json': localTargets.isNotEmpty && localTargets != '[]'
-          ? localTargets
-          : remoteTargets,
-      'status': mergedStatus,
-      'exit_reason': mergedStatus == 'active'
-          ? null
-          : (remoteWins ? remote['exit_reason'] : local['exit_reason']),
-      'updated_at': max(
-        _firestoreMillis(local['updated_at']) ?? 0,
-        _firestoreMillis(remote['updated_at']) ?? 0,
-      ),
-    };
-  }
-
-  static int? _firestoreMillis(Object? value) => switch (value) {
-        DateTime timestamp => timestamp.millisecondsSinceEpoch,
-        num number => number.toInt(),
-        _ => null,
-      };
-
-  Future<void> _reconcileSessionUpload({
-    required Database db,
-    required String uid,
-    required String sessionId,
-    required Map<String, Object?> uploaded,
-    required Map<String, Object?> cloudMerged,
-  }) async {
-    await db.transaction((txn) async {
-      final rows = await txn.query(
-        'review_sessions',
-        where: 'session_id = ? AND uid = ?',
-        whereArgs: [sessionId, uid],
-        limit: 1,
-      );
-      if (rows.isEmpty) return;
-      final current = rows.first;
-      final reconciled = mergeSessionState(current, cloudMerged);
-      final unchangedSinceUpload = _sessionStateFields.every(
-        (key) => current[key] == uploaded[key],
-      );
-      await txn.update(
-        'review_sessions',
-        {
-          ...reconciled,
-          'synced_at': unchangedSinceUpload
-              ? DateTime.now().millisecondsSinceEpoch
-              : null,
-        },
-        where: 'session_id = ? AND uid = ?',
-        whereArgs: [sessionId, uid],
-      );
-    });
-  }
-
-  @visibleForTesting
-  Future<void> reconcileSessionUploadForTesting({
-    required String uid,
-    required String sessionId,
-    required Map<String, Object?> uploaded,
-    required Map<String, Object?> cloudMerged,
-  }) async =>
-      _reconcileSessionUpload(
-        db: await database,
-        uid: uid,
-        sessionId: sessionId,
-        uploaded: uploaded,
-        cloudMerged: cloudMerged,
-      );
 }

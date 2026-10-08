@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'fixtures/offline_http.dart';
 import 'package:word_a_i/services/review_pronunciation.dart';
 import 'package:word_a_i/services/tts_service.dart';
 import 'dart:async';
@@ -12,6 +14,18 @@ import 'package:word_a_i/services/learning_repository.dart';
 import 'package:word_a_i/services/wordai_dossier.dart';
 
 void main() {
+  late OfflineHttp offline;
+  HttpOverrides? previousNetwork;
+  setUp(() {
+    previousNetwork = HttpOverrides.current;
+    offline = OfflineHttp();
+    HttpOverrides.global = offline;
+  });
+  tearDown(() {
+    HttpOverrides.global = previousNetwork;
+    expect(offline.attempts, 0,
+        reason: 'Local review must not contact a service');
+  });
   sqfliteFfiInit();
 
   testWidgets(
@@ -244,16 +258,13 @@ void main() {
     });
   }
 
-  testWidgets('local review does not wait for cloud synchronization',
-      (tester) async {
+  testWidgets('local review starts from saved vocabulary', (tester) async {
     late Database db;
-    late Completer<void> syncGate;
     late LearningRepository repository;
     await tester.runAsync(() async {
       db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       await LearningRepository.createSchema(db);
-      syncGate = Completer<void>();
-      repository = _PausedSyncLearningRepository(db, syncGate);
+      repository = LearningRepository.forTesting(db);
       for (var index = 0; index < 4; index++) {
         await repository.registerDossier(
           'loading-user',
@@ -291,12 +302,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(find.text('Read it in context'), findsOneWidget);
-    expect(syncGate.isCompleted, isFalse);
     expect(
       find.text('Syncing progress across your devices…'),
       findsNothing,
     );
-    syncGate.complete();
   });
 
   testWidgets('a full round shows animated celebration statistics',
@@ -443,16 +452,6 @@ class _PausedAnswerLearningRepository extends LearningRepository {
       activeMs: activeMs,
     );
   }
-}
-
-class _PausedSyncLearningRepository extends LearningRepository {
-  _PausedSyncLearningRepository(super.database, this.syncGate)
-      : super.forTesting();
-
-  final Completer<void> syncGate;
-
-  @override
-  Future<void> syncFromCloud(String uid) => syncGate.future;
 }
 
 WordAiDossier _dossier(String word, int index) => WordAiDossier(

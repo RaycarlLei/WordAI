@@ -147,8 +147,7 @@ class ReviewWordPreparer {
       }
       run.check();
       if (dossier?.isOk == true) {
-        await run.wait(
-            repository.registerDossier(uid, dossier!, syncToCloud: false));
+        await run.wait(repository.registerDossier(uid, dossier!));
         ready = await run.wait(countReady());
       } else {
         misses.add(word);
@@ -183,8 +182,7 @@ class ReviewWordPreparer {
                 remaining < cloudItemTimeout ? remaining : cloudItemTimeout);
         run.check();
         if (dossier?.isOk == true) {
-          await run.wait(
-              repository.registerDossier(uid, dossier!, syncToCloud: false));
+          await run.wait(repository.registerDossier(uid, dossier!));
           ready = await run.wait(countReady());
         }
       } on ReviewPreparationCancelled {

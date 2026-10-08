@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'learning_repository.dart';
+import 'word_book_schema.dart';
 
 const maxLearningBackupBytes = 32 * 1024 * 1024;
 const _profile = 'local';
@@ -14,6 +15,10 @@ const _maxRows = <String, int>{
   'learning_progress': 100000,
   'review_sessions': 100000,
   'review_attempts': 500000,
+  'word_books': 10000,
+  'word_book_members': 200000,
+  'word_book_removals': 100000,
+  'word_book_trash': 100000,
 };
 const _progressFields = <String>[
   'target_id',
@@ -72,11 +77,16 @@ const _fields = <String, List<String>>{
   'learning_progress': _progressFields,
   'review_sessions': _sessionFields,
   'review_attempts': _attemptFields,
+  ...wordBookFields,
 };
 const _primaryKeys = <String, String>{
   'learning_progress': 'target_id',
   'review_sessions': 'session_id',
   'review_attempts': 'attempt_id',
+  'word_books': 'id',
+  'word_book_members': 'id',
+  'word_book_removals': 'id',
+  'word_book_trash': 'id',
 };
 const _rootFields = <String>[
   'format',
@@ -111,6 +121,8 @@ final class LearningBackup {
   int get progressCount => _rows['learning_progress']!.length;
   int get sessionCount => _rows['review_sessions']!.length;
   int get attemptCount => _rows['review_attempts']!.length;
+  int get bookCount => _rows['word_books']!.length;
+  int get trashCount => _rows['word_book_trash']!.length;
 
   Uint8List toBytes() => Uint8List.fromList(_bytes);
 }
@@ -148,7 +160,7 @@ class LearningBackupService {
         await _requireLocalDatabase(txn);
         final document = <String, Object?>{
           'format': 'wordai-learning-backup',
-          'version': 1,
+          'version': 2,
           'profile': _profile,
           'created_at_ms': DateTime.now().millisecondsSinceEpoch,
         };
@@ -197,6 +209,14 @@ class LearningBackupService {
         // Check inside the same transaction as deletion: a non-local profile
         // must never be silently erased, even if the preview preceded it.
         await _requireLocalDatabase(txn);
+        for (final table in [
+          'word_book_members',
+          'word_book_trash',
+          'word_book_removals',
+          'word_books'
+        ]) {
+          await txn.delete(table);
+        }
         await txn.delete('review_questions');
         await txn.delete('review_attempts');
         await txn.delete('review_sessions');
@@ -222,6 +242,9 @@ class LearningBackupService {
             }
             await batch.commit(noResult: true);
           }
+        }
+        if (backup._rows['word_books']!.isEmpty) {
+          await initializeWordBooks(txn);
         }
       });
     } on LearningBackupException {
@@ -252,17 +275,21 @@ Future<void> _requireLocalDatabase(DatabaseExecutor db) async {
 }
 
 LearningBackup _validate(Object? input) {
-  final root = _exactMap(input, _rootFields);
+  final version = input is Map ? input['version'] : null;
+  final root = _exactMap(
+      input, [..._rootFields, if (version == 2) ...wordBookFields.keys]);
   if (root['format'] != 'wordai-learning-backup' ||
       root['version'] is! int ||
-      root['version'] != 1 ||
+      !const [1, 2].contains(root['version']) ||
       root['profile'] != _profile) {
     throw _invalid;
   }
   final created = _timestamp(root['created_at_ms']);
   final tables = <String, List<Map<String, Object?>>>{};
   for (final table in _fields.keys) {
-    final inputRows = root[table];
+    final inputRows = version == 1 && wordBookFields.containsKey(table)
+        ? const []
+        : root[table];
     if (inputRows is! List || inputRows.length > _maxRows[table]!) {
       throw _invalid;
     }
@@ -294,12 +321,15 @@ LearningBackup _validate(Object? input) {
       throw _invalid;
     }
   }
+  _validateWordBooks(tables, legacy: version == 1);
   final bytes = _encode({
     'format': root['format'],
-    'version': 1,
+    'version': version,
     'profile': _profile,
     'created_at_ms': created,
-    ...tables,
+    for (final entry in tables.entries)
+      if (version == 2 || !wordBookFields.containsKey(entry.key))
+        entry.key: entry.value,
   });
   return LearningBackup._(created, Map.unmodifiable(tables), bytes);
 }
@@ -315,7 +345,9 @@ Map<String, Object?> _exactMap(Object? input, List<String> fields) {
 
 void _validateRow(String table, Map<String, Object?> row) {
   if (row['uid'] != _profile) throw _invalid;
-  if (table == 'learning_progress') {
+  if (wordBookFields.containsKey(table)) {
+    _validateBookRow(table, row);
+  } else if (table == 'learning_progress') {
     final target = _hashId(row['target_id']);
     final lexeme = _hashId(row['lexeme_id']);
     final query = _string(row['query'], maximum: 2048, nonempty: true);
@@ -385,6 +417,88 @@ void _validateRow(String table, Map<String, Object?> row) {
     }
     _integer(row['latency_ms'], maximum: 3600000);
     _timestamp(row['created_at']);
+  }
+}
+
+void _validateBookRow(String table, Map<String, Object?> row) {
+  _string(row['id'], maximum: 2200, nonempty: true);
+  if (table == 'word_books') {
+    _identifier(row['id']);
+    final kind = row['kind'];
+    if (!const {'default', 'learned', 'unfamiliar', 'custom'}.contains(kind)) {
+      throw _invalid;
+    }
+    if (kind != 'custom' && row['id'] != kind) throw _invalid;
+    if (kind == 'custom' &&
+        const {'default', 'learned', 'unfamiliar'}.contains(row['id'])) {
+      throw _invalid;
+    }
+    _string(row['name'], maximum: 512, nonempty: true);
+    _timestamp(row['created_at']);
+  } else if (table == 'word_book_members') {
+    _string(row['book_id'], maximum: 128, nonempty: true);
+    final query = _string(row['query'], maximum: 2048, nonempty: true);
+    if (query != query.trim().toLowerCase() ||
+        row['id'] != "${row['book_id']}:$query") {
+      throw _invalid;
+    }
+  } else if (table == 'word_book_removals') {
+    if (row['id'] != (row['id'] as String).trim().toLowerCase()) throw _invalid;
+    _timestamp(row['removed_at']);
+  } else {
+    _identifier(row['id']);
+    _string(row['book_id'], maximum: 128, nonempty: true);
+    _string(row['name'], maximum: 512, nonempty: true);
+    if (!const {'book', 'words'}.contains(row['kind'])) throw _invalid;
+    if (row['kind'] == 'book' &&
+        const {'default', 'learned'}.contains(row['book_id'])) {
+      throw _invalid;
+    }
+    final deleted = _timestamp(row['deleted_at']);
+    if (_timestamp(row['expires_at']) !=
+        deleted + const Duration(days: 7).inMilliseconds) {
+      throw _invalid;
+    }
+    final encoded =
+        _string(row['queries_json'], maximum: maxLearningBackupBytes);
+    _checkJsonStructure(encoded);
+    final words = jsonDecode(encoded);
+    if (words is! List || words.length > 100000) throw _invalid;
+    final unique = <String>{};
+    for (final value in words) {
+      final word = _string(value, maximum: 2048, nonempty: true);
+      if (word != word.trim().toLowerCase() || !unique.add(word)) {
+        throw _invalid;
+      }
+    }
+  }
+}
+
+void _validateWordBooks(Map<String, List<Map<String, Object?>>> tables,
+    {required bool legacy}) {
+  if (legacy) return;
+  final books = {
+    for (final row in tables['word_books']!) row['id'] as String: row
+  };
+  if (books['default']?['kind'] != 'default' ||
+      books['learned']?['kind'] != 'learned') {
+    throw _invalid;
+  }
+  final queries = {
+    for (final row in tables['learning_progress']!)
+      (row['query'] as String).trim().toLowerCase()
+  };
+  for (final row in tables['word_book_members']!) {
+    if (!books.containsKey(row['book_id']) || !queries.contains(row['query'])) {
+      throw _invalid;
+    }
+  }
+  for (final row in tables['word_book_removals']!) {
+    if (!queries.contains(row['id'])) throw _invalid;
+  }
+  for (final row in tables['word_book_trash']!) {
+    final words = jsonDecode(row['queries_json'] as String) as List;
+    if (words.any((w) => !queries.contains(w))) throw _invalid;
   }
 }
 

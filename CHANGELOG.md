@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- Add local word books, scoped review, permanent Default and Learned books,
+  and automatic admission after every meaning is learned.
+- Keep removed words and deleted books in a transactional seven-day trash.
+  Manual removals from Learned survive refresh and backup restoration.
+- Upgrade SQLite to schema 5 and learning backups to format 2. Format 1
+  backups remain readable and initialize local system books on restore.
+- Reduce correct-answer hold to 500 ms; retain isolated audio ownership,
+  persisted-question validation, imports and system-file backup behavior.
+- Add offline UI and data regression scenarios; scan binary metadata and
+  public path allowlists before publication.
+
 ## 0.1.2
 
 - Give each media playback its own player and keep native ownership separate

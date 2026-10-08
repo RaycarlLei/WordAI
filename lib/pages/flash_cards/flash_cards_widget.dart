@@ -16,7 +16,7 @@ import '/widgets/review_loading_view.dart';
 class FlashCardsWidget extends StatefulWidget {
   const FlashCardsWidget({
     super.key,
-    @visibleForTesting this.repository,
+    this.repository,
     @visibleForTesting this.testUid,
     this.initialWords,
     @visibleForTesting this.dossierLoader,
@@ -39,8 +39,7 @@ class FlashCardsWidget extends StatefulWidget {
 
 class _FlashCardsWidgetState extends State<FlashCardsWidget>
     with WidgetsBindingObserver {
-  static const _emptyDeviceCloudBudget = Duration(milliseconds: 800);
-  static const _correctAnswerHoldDuration = Duration(milliseconds: 1000);
+  static const _correctAnswerHoldDuration = Duration(milliseconds: 500);
 
   late final LearningRepository _repository;
   late final ReviewPronunciation _pronunciation;
@@ -222,14 +221,6 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
     run.check();
   }
 
-  Future<void> _syncSafely() async {
-    try {
-      await _repository.syncFromCloud(_uid);
-    } catch (error, stack) {
-      _logDeveloperError('review.backgroundSync', error, stack);
-    }
-  }
-
   Future<void> _initialize() async {
     if (!mounted) return;
     _cancelCorrectAdvance();
@@ -251,31 +242,11 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
           _t('Restoring learning progress…', '正在恢复学习进度…', '正在恢復學習進度…');
     });
     _stopPronunciation();
-    // Attach an error handler immediately; a background failure must not
-    // escape before a later await or take down local review.
     final languageCode = FFLocalizations.of(context).languageCode;
-    final cloudSync = _syncSafely();
     try {
       var session = await run.wait(_resumeSession());
       var restoredSession = session != null;
       _checkRun(run);
-      if (session == null &&
-          await run.wait(_repository.reviewableWordCount(_uid,
-                  queries: _reviewScope)) ==
-              0) {
-        _setPreparationDetail(
-            'Checking briefly for progress from another device…',
-            '正在快速检查其他设备的进度…',
-            '正在快速檢查其他裝置的進度…');
-        try {
-          await run.wait(cloudSync, timeout: _emptyDeviceCloudBudget);
-        } on TimeoutException {
-          // Background sync never gates an otherwise usable local round.
-        }
-        _checkRun(run);
-        session = await run.wait(_resumeSession());
-        restoredSession = session != null;
-      }
       if (session == null) {
         _checkRun(run);
         await _seedAvailableWords(_wordsFromRoute(), run);
@@ -305,13 +276,6 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
       }
       if (_question == null && !_completing) await _refreshEmptyState(run);
       if (_ownsRun(run)) setState(() => _loading = false);
-      // Batch registration writes a durable outbox, not hundreds of parallel
-      // Firestore requests. Flush it after the UI becomes ready.
-      unawaited(cloudSync.then((_) {
-        if (_ownsRun(run) && _accountIsCurrent) {
-          return _syncSafely();
-        }
-      }));
     } on ReviewPreparationCancelled {
       // Page was closed, account changed, or a newer run superseded this one.
       if (mounted && !_accountIsCurrent) context.pop();
@@ -348,6 +312,7 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
       List<String> words, ReviewPreparationRun run) async {
     final preparer = ReviewWordPreparer(
       repository: _repository,
+      maxCloudRequests: 0,
       onFailure: (stage, error, stack) =>
           _logDeveloperError('review.prepare.$stage', error, stack),
       load: widget.dossierLoader ?? (_, __) => const Stream.empty(),
@@ -361,15 +326,8 @@ class _FlashCardsWidgetState extends State<FlashCardsWidget>
       onProgress: (
           {required cloud, required checked, required total, required ready}) {
         _checkRun(run);
-        if (cloud) {
-          _setPreparationDetail(
-              'Completing missing content online · $checked/$total',
-              '正在联网补全缺失内容 · $checked/$total',
-              '正在連線補全缺失內容 · $checked/$total');
-        } else {
-          _setPreparationDetail('Checking local resources · $checked/$total',
-              '正在检查本地资源 · $checked/$total', '正在檢查本機資源 · $checked/$total');
-        }
+        _setPreparationDetail('Checking local resources · $checked/$total',
+            '正在检查本地资源 · $checked/$total', '正在檢查本機資源 · $checked/$total');
       },
     );
     _checkRun(run);

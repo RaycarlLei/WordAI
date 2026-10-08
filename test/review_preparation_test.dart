@@ -90,7 +90,7 @@ void main() {
         20);
   });
 
-  test('local round stops at twenty and batches progress uploads', () async {
+  test('local round stops at twenty and persists each prepared word', () async {
     var calls = 0;
     final repo = _TrackedRepository(db);
     final preparer = ReviewWordPreparer(
@@ -108,7 +108,7 @@ void main() {
             onProgress: progress),
         20);
     expect(calls, 20);
-    expect(repo.immediateUploads, 0);
+    expect(repo.registrations, 20);
     expect(await repository.createSession('u'), isNotNull);
   });
 
@@ -343,11 +343,10 @@ void main() {
 
 class _TrackedRepository extends LearningRepository {
   _TrackedRepository(super.database) : super.forTesting();
-  int immediateUploads = 0;
+  int registrations = 0;
   @override
-  Future<int> registerDossier(String uid, WordAiDossier dossier,
-      {bool syncToCloud = true}) {
-    if (syncToCloud) immediateUploads++;
-    return super.registerDossier(uid, dossier, syncToCloud: syncToCloud);
+  Future<int> registerDossier(String uid, WordAiDossier dossier) {
+    registrations++;
+    return super.registerDossier(uid, dossier);
   }
 }

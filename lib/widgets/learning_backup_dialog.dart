@@ -139,9 +139,9 @@ class _LearningBackupDialogState extends State<LearningBackupDialog> {
           children: [
             if (backup == null) ...[
               Text(t(
-                  'Save your vocabulary, progress and review history to a file you choose.',
-                  '将词汇、学习进度和答题历史保存到你选择的文件。',
-                  '將詞彙、學習進度和答題歷史儲存到你選擇的檔案。')),
+                  'Save your vocabulary, progress, word books and recently deleted items to a file you choose.',
+                  '将词汇、学习进度、单词本和最近删除保存到你选择的文件。',
+                  '將詞彙、學習進度、單字本和最近刪除儲存到你選擇的檔案。')),
               const SizedBox(height: 12),
               Text(
                   t('Backups are readable JSON. Keep them somewhere private.',
@@ -167,6 +167,13 @@ class _LearningBackupDialogState extends State<LearningBackupDialog> {
               ],
             ] else ...[
               Text(_date(backup)),
+              Text(t(
+                  '${backup.bookCount} books · ${backup.trashCount} recently deleted',
+                  '${backup.bookCount} 个单词本 · ${backup.trashCount} 项最近删除',
+                  '${backup.bookCount} 個單字本 · ${backup.trashCount} 項最近刪除')),
+              if (backup.bookCount == 0)
+                Text(t('Legacy backup: system books will be initialized.',
+                    '旧版备份：将初始化系统单词本。', '舊版備份：將初始化系統單字本。')),
               const SizedBox(height: 12),
               Text(t(
                   '${_count(backup.progressCount, 'meaning')} · ${_count(backup.attemptCount, 'answer')} · ${_count(backup.sessionCount, 'session')}',
@@ -174,9 +181,9 @@ class _LearningBackupDialogState extends State<LearningBackupDialog> {
                   '${backup.progressCount} 個詞義 · ${backup.attemptCount} 次答題 · ${backup.sessionCount} 輪學習')),
               const SizedBox(height: 16),
               Text(t(
-                  'This replaces all local vocabulary, progress and review history. Save your current data first if you want to keep it.',
-                  '这会替换本机全部词汇、学习进度和答题历史。如果需要保留当前数据，请先保存备份。',
-                  '這會替換本機全部詞彙、學習進度和答題歷史。如果需要保留目前資料，請先儲存備份。')),
+                  'This replaces all local vocabulary, progress, word books, recently deleted items and review history. Save your current data first if you want to keep it.',
+                  '这会替换本机全部词汇、学习进度、单词本、最近删除和答题历史。如果需要保留当前数据，请先保存备份。',
+                  '這會替換本機全部詞彙、學習進度、單字本、最近刪除和答題歷史。如果需要保留目前資料，請先儲存備份。')),
               const SizedBox(height: 12),
               Text(t(
                   'Unfinished rounds will be closed. Your earned progress and answers are kept; questions are prepared again next round.',

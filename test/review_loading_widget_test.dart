@@ -35,15 +35,14 @@ Future<void> flush(WidgetTester tester) async {
 void main() {
   sqfliteFfiInit();
 
-  testWidgets(
-      'stalled preparation offers retry, ignores late run, and sync error is contained',
+  testWidgets('stalled local preparation offers retry and ignores late run',
       (tester) async {
     late Database db;
     late _PendingRepository repo;
     await tester.runAsync(() async {
       db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       await LearningRepository.createSchema(db);
-      repo = _PendingRepository(db, failSync: true);
+      repo = _PendingRepository(db);
       for (var i = 0; i < 4; i++) {
         await repo.registerDossier('u', reviewDossier('word$i', i));
       }
@@ -165,19 +164,12 @@ void main() {
 }
 
 class _PendingRepository extends LearningRepository {
-  _PendingRepository(super.database, {this.failSync = false})
-      : super.forTesting();
-  final bool failSync;
+  _PendingRepository(super.database) : super.forTesting();
   final gate = Completer<ReviewSessionState?>();
   int calls = 0;
   @override
   Future<ReviewSessionState?> resumeActiveSession(String uid) {
     if (calls++ == 0) return gate.future;
     return super.resumeActiveSession(uid);
-  }
-
-  @override
-  Future<void> syncFromCloud(String uid) async {
-    if (failSync) throw StateError('mock sync failure');
   }
 }

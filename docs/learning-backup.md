@@ -3,7 +3,7 @@
 A learning backup saves the local review data needed to continue learning on
 another installation: the stored meanings and examples used for review, earned
 progress, session summaries, and answered-attempt history. It is a UTF-8 JSON
-file with format `wordai-learning-backup`, version `1`, and profile `local`.
+file with format `wordai-learning-backup`, version `2`, and profile `local`. Version 1 remains readable.
 
 This is a logical database snapshot, not an archive of the original S6 dossiers.
 The learning tables contain only the review fields extracted from those dossiers;
@@ -14,7 +14,7 @@ Choose a storage location appropriate for that content.
 
 ## Export and restore
 
-Export reads all three learning tables and checks the profile in one SQLite
+Export reads all learning and word-book tables and checks the profile in one SQLite
 transaction. It selects explicit columns, rather than copying the database file
 or accepting every column a future schema might add. Export is read-only: it
 does not retire an active session or clear cached questions. An invalid local
@@ -212,3 +212,21 @@ particular, an APK signed with another debug key normally cannot replace it in
 place. Keep the old installation until its data has been backed up through a
 compatible build or a separately verified recovery process. No production signing
 material or user backup is distributed by this repository.
+
+## Version 2 word-book extension
+
+Version 2 requires four additional root arrays: `word_books`,
+`word_book_members`, `word_book_removals` and `word_book_trash`. Every row uses
+profile `local`; columns are explicitly listed in `word_book_schema.dart`.
+The preview and byte/row limits apply before the replacement transaction.
+System identities and kinds, membership identities, references to stored
+queries, unique rows, seven-day expiry and bounded names are validated.
+Unrecognized format versions or extra fields are rejected before any writes.
+
+Restore replaces book membership, manual Learned-removal timestamps and trash
+in the same transaction as learning data. Format 1 initializes Default, Learned
+and Unfamiliar Words, placing restored vocabulary in Default. Format 2 preserves
+book identity and original trash expiry: restoring does not restart seven days.
+The next book read reconciles fully learned words, honoring manual removals.
+The database upgrade from schema 4 to 5 preserves progress and unanswered rounds;
+only explicit backup restoration closes unfinished rounds as described above.

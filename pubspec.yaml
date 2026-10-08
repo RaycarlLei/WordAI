@@ -1,7 +1,7 @@
 name: word_a_i
 description: Free and open-source offline vocabulary learning with optional self-hosted speech.
 publish_to: none
-version: 0.1.4+5
+version: 0.2.0+6
 environment:
   sdk: ">=3.6.0 <4.0.0"
   flutter: ">=3.44.0"

@@ -18,3 +18,12 @@ must not be published.
 The default app does not contact production services or automatically download
 paid resources. Open-source software does not include hosted compute or third-party
 speech service credits. See the [Chinese version](open-source-scope.zh-CN.md).
+
+## Local feature updates
+
+Word books, learned-word admission, seven-day trash and recovery are adapted to
+one local SQLite profile. Hosted catalogs, accounts, synchronization, assistant
+connections, production identifiers and deployment resources are excluded.
+Updates preserve the public repository history and select source capabilities
+without importing private Git objects. Public checks include path allowlists,
+secret scanning, binary metadata scanning and offline regression scenarios.

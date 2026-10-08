@@ -15,6 +15,8 @@ import 'widgets/learning_backup_dialog.dart';
 import 'widgets/reicon.dart';
 import 'widgets/wordai_motion.dart';
 import 'sample_words.dart';
+import 'pages/word_books_page.dart';
+import 'services/word_book_repository.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,8 +53,14 @@ class _CommunityAppState extends State<CommunityApp> {
             backupFiles: widget.backupFiles,
             onLocale: (locale) => setState(() => _locale = locale))),
     GoRoute(
+        path: '/books',
+        builder: (_, __) => WordBooksPage(
+            repository: WordBookRepository(
+                widget.homeRepository ?? LearningRepository.instance))),
+    GoRoute(
         path: '/review',
         builder: (_, state) => FlashCardsWidget(
+            repository: widget.homeRepository,
             initialWords: (state.extra as List<String>?) ?? const [])),
   ]);
   @override
@@ -245,6 +253,16 @@ class _HomeState extends State<_Home> {
                                         '${_words.length} 个词 · $_pending 个待学习')),
                                     const SizedBox(height: 16),
                                     Wrap(spacing: 12, runSpacing: 8, children: [
+                                      OutlinedButton.icon(
+                                          onPressed: _busy
+                                              ? null
+                                              : () async {
+                                                  await context.push('/books');
+                                                  await _load();
+                                                },
+                                          icon: const Reicon(ReiconGlyph.book),
+                                          label: Text(bookText(context,
+                                              'Word books', '单词本', '單字本'))),
                                       FilledButton.icon(
                                           onPressed: _busy || _words.isEmpty
                                               ? null

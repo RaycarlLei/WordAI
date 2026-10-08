@@ -9,16 +9,6 @@ import 'package:word_a_i/services/wordai_dossier.dart';
 void main() {
   sqfliteFfiInit();
 
-  test('progress cloud identity satisfies owner-scoped Firestore rules', () {
-    expect(
-      LearningRepository.progressCloudIdentity('formal-user', 'target-1'),
-      const <String, Object?>{
-        'uid': 'formal-user',
-        'target_id': 'target-1',
-      },
-    );
-  });
-
   test(
       'version 2 upgrade preserves progress and sessions while adding questions',
       () async {
@@ -577,117 +567,6 @@ void main() {
         .single;
     expect(old['status'], 'exited');
     expect(old['exit_reason'], 'superseded_session');
-  });
-
-  test('same-stage progress merge keeps remote attempts and latest times', () {
-    final merged = LearningRepository.mergeProgressState(
-      const <String, Object?>{
-        'stage': 0,
-        'learned_once': 0,
-        'attempt_count': 1,
-        'context_passed_at': null,
-        'learned_at': null,
-        'last_tested_at': 100,
-        'updated_at': 120,
-      },
-      const <String, dynamic>{
-        'stage': 0,
-        'learned_once': false,
-        'attempt_count': 3,
-        'context_passed_at': null,
-        'learned_at': null,
-        'last_tested_at': 200,
-        'updated_at': 220,
-      },
-    );
-    expect(merged['stage'], 0);
-    expect(merged['attempt_count'], 3);
-    expect(merged['last_tested_at'], 200);
-    expect(merged['updated_at'], 220);
-  });
-
-  test('stale session upload cannot roll back a locally recorded answer',
-      () async {
-    final (db, repo) = await repository();
-    addTearDown(db.close);
-    for (var i = 0; i < 4; i++) {
-      await repo.registerDossier('u1', dossier('word$i', i));
-    }
-    final session = (await repo.createSession('u1'))!;
-    final uploaded = Map<String, Object?>.from((await db.query(
-      'review_sessions',
-      where: 'session_id = ? AND uid = ?',
-      whereArgs: [session.id, 'u1'],
-    ))
-        .single)
-      ..remove('synced_at');
-    final question = (await repo.buildQuestion(session, 'en'))!;
-    await repo.recordAnswer(
-      uid: 'u1',
-      session: session,
-      question: question,
-      selectedIndex: question.correctIndex,
-      latencyMs: 10,
-      activeMs: 10,
-    );
-
-    // Models the create-session upload completing after recordAnswer already
-    // advanced the same local row.
-    await repo.reconcileSessionUploadForTesting(
-      uid: 'u1',
-      sessionId: session.id,
-      uploaded: uploaded,
-      cloudMerged: uploaded,
-    );
-
-    final saved = (await db.query(
-      'review_sessions',
-      where: 'session_id = ? AND uid = ?',
-      whereArgs: [session.id, 'u1'],
-    ))
-        .single;
-    expect(saved['current_index'], 1);
-    expect(saved['completed_count'], 1);
-    expect(saved['synced_at'], isNull);
-    final advanced = await repo.sessionById(session.id);
-    expect(await repo.buildQuestion(advanced, 'en'), isNotNull);
-  });
-
-  test('session merge never revives terminal state or regresses counters', () {
-    final merged = LearningRepository.mergeSessionState(
-      const <String, Object?>{
-        'started_at': 100,
-        'ended_at': 300,
-        'active_ms': 200,
-        'target_count': 4,
-        'completed_count': 2,
-        'context_passed_count': 1,
-        'new_learned_count': 1,
-        'current_index': 2,
-        'target_ids_json': '["local"]',
-        'status': 'completed',
-        'exit_reason': 'round_complete',
-        'updated_at': 300,
-      },
-      const <String, Object?>{
-        'started_at': 110,
-        'active_ms': 50,
-        'target_count': 4,
-        'completed_count': 0,
-        'context_passed_count': 0,
-        'new_learned_count': 0,
-        'current_index': 0,
-        'target_ids_json': '["remote"]',
-        'status': 'active',
-        'updated_at': 400,
-      },
-    );
-    expect(merged['status'], 'completed');
-    expect(merged['exit_reason'], 'round_complete');
-    expect(merged['current_index'], 2);
-    expect(merged['completed_count'], 2);
-    expect(merged['target_ids_json'], '["local"]');
-    expect(merged['updated_at'], 400);
   });
 }
 

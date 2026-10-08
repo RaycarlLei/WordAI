@@ -59,6 +59,20 @@ flutter test
 python3 scripts/check_public_tree.py
 ```
 
+## Local word books
+
+Open **Word books** to create or rename a book, add imported words, and review
+only that book. **Default** receives newly imported words and **Learned** receives
+a word after every stored meaning is learned. Both books remain available.
+**Unfamiliar Words** and custom books can be deleted. Removing a word from a book
+never removes its dictionary content or earned progress. A word manually removed
+from Learned stays out until a meaning is learned again or it is added manually.
+
+**Recently Deleted** keeps deleted books and removed words for seven days on this
+device. Restore merges by book identity without duplicating words; it does not
+merge different books merely because they share a name. Expired items are removed
+when the trash opens. Permanent deletion requires confirmation.
+
 ## Import words
 
 Choose **Import dictionary** on the home screen. A file may contain one entry or an array
@@ -87,7 +101,7 @@ and audio collections are not distributed here.
 ## Back up learning data
 
 Choose **Learning backup → Save backup** to save vocabulary, meaning-level
-progress and review history. **Restore from file** validates a complete backup
+progress, review history, word books and recently deleted items. **Restore from file** validates a complete backup
 (up to 32 MiB) and previews its date and record counts. Confirming **Replace local
 learning data** replaces the current learning data; save a separate backup first
 if you need to keep it. Unfinished rounds close, and the next round prepares new
@@ -126,3 +140,7 @@ and third-party terms. WordAI names and artwork do not grant trademark rights.
 Community-edition history and usage must not be confused with the private product.
 
 [Open-source boundary](docs/open-source-scope.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+Version 0.2.0 uses SQLite schema 5 and backup format 2. Format 1 backups remain
+readable; restoring one replaces current books with initialized system books.
+Older apps cannot read format 2 or schema 5. Save a backup before upgrading.

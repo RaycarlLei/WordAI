@@ -228,8 +228,8 @@ void main() {
     final disk = await _Disk.create(history: true);
     final original = _decode(await disk.service.capture());
     final mutations = <String, void Function(Map<String, dynamic>)>{
-      'version': (d) => d['version'] = 2,
-      'numeric version type': (d) => d['version'] = 1.0,
+      'version': (d) => d['version'] = 3,
+      'numeric version type': (d) => d['version'] = 2.0,
       'unknown root field': (d) => d['extra'] = true,
       'missing root field': (d) => d.remove('created_at_ms'),
       'foreign profile': (d) => d['profile'] = 'another-profile',
@@ -303,9 +303,9 @@ void main() {
       [],
       [0xff],
       utf8.encode(json.substring(0, json.length - 1)),
-      utf8.encode(json.replaceFirst('"version":1', '"version":2,"version":1')),
+      utf8.encode(json.replaceFirst('"version":2', '"version":2,"version":1')),
       utf8.encode(
-          json.replaceFirst('"version":1', '"vers\\u0069on":2,"version":1')),
+          json.replaceFirst('"version":2', '"vers\\u0069on":2,"version":1')),
       utf8.encode(json.replaceFirst('"stage":0', '"stage":2,"stage":0')),
       utf8.encode('${'[' * 9}0${']' * 9}'),
       utf8.encode('{"bad": [}'),
